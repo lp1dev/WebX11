@@ -87,25 +87,13 @@ class WebSocketHandler:
         x = data.get('x')
         y = data.get('y')
         button = data.get('button', 1)
+        print("click", button, x, y, pressed)
         
         if x is not None and y is not None:
             window_display = self.window_manager.get_window_display(window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_mouse_event(x, y, button, pressed)
-                
-                # response = {
-                #     'type': 'input_result',
-                #     'input_type': 'mousedown' if pressed else 'mouseup',
-                #     'success': success,
-                #     'x': x,
-                #     'y': y,
-                #     'button': button
-                # }
-                # await websocket.send(json.dumps(response))
-                
-                # if success:
-                #     await asyncio.sleep(0.1)
-                #     await self.send_window_update(websocket, window_id)
+
     
     async def handle_mouse_move(self, websocket, data, window_id):
         x = data.get('x')
@@ -117,7 +105,6 @@ class WebSocketHandler:
                 try:
                     window_display.input_handler.root.warp_pointer(x + window_display.x, y + window_display.y)
                     window_display.input_handler.display.sync()
-                    # await self.send_window_update(websocket, window_id)
                 except Exception as e:
                     print(f"Mouse move error: {e}")
     
@@ -130,20 +117,7 @@ class WebSocketHandler:
             window_display = self.window_manager.get_window_display(window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_scroll_event(x, y, delta_y)
-                
-                # response = {
-                #     'type': 'input_result',
-                #     'input_type': 'scroll',
-                #     'success': success,
-                #     'x': x,
-                #     'y': y,
-                #     'deltaY': delta_y
-                # }
-                # await websocket.send(json.dumps(response))
-                
-                # if success:
-                #     await asyncio.sleep(0.1)
-                #     await self.send_window_update(websocket, window_id)
+
     
     async def handle_key_event(self, websocket, data, pressed, window_id):
         key = data.get('key')
@@ -152,19 +126,7 @@ class WebSocketHandler:
             window_display = self.window_manager.get_window_display(window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_key_event_by_name(key, pressed)
-                
-                # response = {
-                #     'type': 'input_result',
-                #     'input_type': 'keydown' if pressed else 'keyup',
-                #     'success': success,
-                #     'key': key
-                # }
-                # await websocket.send(json.dumps(response))
-                
-                # if success and not pressed:
-                #     await asyncio.sleep(0.1)
-                #     await self.send_window_update(websocket, window_id)
-    
+
     async def handle_text_input(self, websocket, data, window_id):
         text = data.get('text', '')
         
@@ -172,22 +134,11 @@ class WebSocketHandler:
             window_display = self.window_manager.get_window_display(window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_text_input(text)
-                
-                # response = {
-                #     'type': 'input_result',
-                #     'input_type': 'text',
-                #     'success': success,
-                #     'text': text
-                # }
-                # await websocket.send(json.dumps(response))
-                
-                # if success:
-                #     await asyncio.sleep(0.1)
-                #     await self.send_window_update(websocket, window_id)
     
     async def send_window_update(self, websocket, window_id, force=False):
         global IMAGES_SENT
         try:
+            print("IN SEND WINDOW UPDATE")
             window_display = self.window_manager.get_window_display(window_id)
             if window_display:
                 window_image = window_display.capture_window(compressed=True, force=force)

@@ -70,11 +70,6 @@ class APIHandler(BaseHTTPRequestHandler):
         windows = []
         for window_display in self.window_manager.get_all_windows():
             window_info = window_display.get_window_info()
-            for app in self.app_manager.list_applications():
-                if app and app['window_id'] == window_info['id']:
-                    window_info['application'] = app['name']
-                    window_info['app_key'] = app['app_key']
-                    break
             windows.append(window_info)
         
         self.wfile.write(json.dumps(windows).encode('utf-8'))

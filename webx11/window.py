@@ -57,7 +57,7 @@ class WindowScreenCapture:
                 y = geometry.y
             
             cropped = image.crop((x, y, width, height))
-            if cropped.size != (0, 0) or (geometry.width == 1920 and geometry.height == 1080):
+            if cropped.size != (0, 0) or (geometry.width == self.display.maxwidth and geometry.height == self.display.maxheight):
                 cropped.save(buffer, format='WEBP', dpi=[dpi, dpi], quality=quality)
             else:
                 image.save(buffer, format='WEBP', dpi=[dpi, dpi], quality=quality)

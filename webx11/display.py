@@ -26,6 +26,8 @@ class SingleWindowDisplay:
         self.last_frame = None
         self.quality = 30
         self.dpi = 200
+        self.maxwidth = width
+        self.maxheight = height
         
     def start(self):
         """Start the virtual display for this window"""

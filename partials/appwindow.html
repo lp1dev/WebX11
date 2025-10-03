@@ -52,6 +52,23 @@
             }};
         }}
 
+        const decompress = base64string => {{
+            const bytes = Uint8Array.from(atob(base64string), c => c.charCodeAt(0));
+            const cs = new DecompressionStream('gzip');
+            const writer = cs.writable.getWriter();
+            writer.write(bytes);
+            writer.close();
+            return new Response(cs.readable).arrayBuffer()
+        }}
+
+        const decompressBytes = bytesArray => {{
+            const cs = new DecompressionStream('gzip');
+            const writer = cs.writable.getWriter();
+            writer.write(bytesArray);
+            writer.close();
+            return new Response(cs.readable).arrayBuffer()
+        }}
+
         const windowId = {window_id}; // Set your window ID here
         let transport = null;
         let ws = null;
@@ -71,7 +88,12 @@
             framesReceived: 0,
             framesDropped: 0,
             chunksReceived: 0,
-            lastFrameTime: Date.now()
+            lastFrameTime: Date.now(),
+            timePassed: 0,
+            timePassed: 0,
+            lastFPS: 0,
+            frameSavedFPSCount: 0,
+            lastUpdate: Date.now()
         }};
         
         // Try WebTransport first, fallback to WebSocket
@@ -111,12 +133,12 @@
                     console.log('WebTransport closed');
                     useWebTransport = false;
                     updateStatus('disconnected');
-                    setTimeout(connectWebTransport, 2000);
+                    // setTimeout(connectWebTransport, 2000);
                 }}).catch(err => {{
                     console.error('WebTransport error:', err);
                     useWebTransport = false;
                     updateStatus('disconnected');
-                    setTimeout(connectWebTransport, 2000);
+                    // setTimeout(connectWebTransport, 2000);
                 }});
                 
             }} catch (error) {{
@@ -174,7 +196,7 @@
         function handleImageChunk(data) {{
             stats.chunksReceived++;
             
-            // Parse header (16 bytes)
+            // Parse header (18 bytes)
             const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
             const frameId = view.getUint16(0);
             const chunkIndex = view.getUint16(2);
@@ -236,10 +258,25 @@
                     offset += chunk.length;
                 }}
                 
+
+                // Decompress image
+                
+                const decompressed = decompressBytes(fullData).then((decompressed) => {{
+                    const blob = new Blob([decompressed], {{ type: 'image/webp' }});
+                    const imgUrl = URL.createObjectURL(blob);
+                    const img = document.getElementById('windowImage');
+                    if (img.src && img.src.startsWith('blob:')) {{
+                        URL.revokeObjectURL(img.src);
+                    }}
+                    img.src = imgUrl;
+                }})
+                
+                
+                stats.framesReceived++;
+                stats.lastFrameTime = Date.now();
+                
                 // Display image
-                const blob = new Blob([fullData], {{ type: 'image/jpeg' }});
-                const imgUrl = URL.createObjectURL(blob);
-                const img = document.getElementById('windowImage');
+
                 
 
                 // var reader = new FileReader();
@@ -249,17 +286,10 @@
                 //     img.src = base64data;
 
                 // }}
+                // return
 
                 // Clean up old blob URL
-                if (img.src && img.src.startsWith('blob:')) {{
-                    URL.revokeObjectURL(img.src);
-                }}
-                
-                img.src = imgUrl;
-                
-                stats.framesReceived++;
-                stats.lastFrameTime = Date.now();
-                
+
                 // console.log(`Frame ${{currentFrame.id}} complete: ${{currentFrame.totalChunks}} chunks, ${{totalSize}} bytes`);
                 
             }} catch (error) {{
@@ -268,13 +298,26 @@
         }}
         
         function updateStats() {{
-            const fps = stats.framesReceived > 0 ? 
-                (1000 / (Date.now() - stats.lastFrameTime)).toFixed(1) : 0;
+            stats.timePassed = Date.now() - stats.lastUpdate
+            // stats.frameSavedFPSCount += stats.framesReceived - stats.timePassed
+            // stats.timePassed = stats.framesReceived
+            
+            // const fps = stats.framesReceived > 0 ? 
+            //     (1000 / (Date.now() - stats.lastFrameTime)).toFixed(1) : 0;
+            if (stats.timePassed >= 5000) {{
+                const total_frames = stats.framesReceived - stats.frameSavedFPSCount
+
+                stats.lastFPS = total_frames / (stats.timePassed / 1000)
+                stats.lastFPS = stats.lastFPS.toFixed(1)
+                stats.frameSavedFPSCount = stats.framesReceived
+                stats.lastUpdate = Date.now()
+            }}
             
             document.getElementById('stats').innerHTML = `
                 Frames: ${{stats.framesReceived}} | Dropped: ${{stats.framesDropped}}<br>
                 Chunks: ${{stats.chunksReceived}}<br>
-                Current: ${{currentFrame.receivedChunks}}/${{currentFrame.totalChunks}}
+                Current: ${{currentFrame.receivedChunks}}/${{currentFrame.totalChunks}}<br>
+                FPS: ${{stats.lastFPS}}
             `;
         }}
 
@@ -282,7 +325,6 @@
             const request = await fetch("/settings.json")
             let response = await request.json()
             window.settings = response.settings
-            console.log(window.settings, window.settings.transport)
             if (window.settings && window.settings.transport == 'webtransport') {{
                 connectWebTransport()
             }} else {{
@@ -291,15 +333,6 @@
             }}
         }}
         
-        const decompress = base64string => {{
-                const bytes = Uint8Array.from(atob(base64string), c => c.charCodeAt(0));
-                const cs = new DecompressionStream('gzip');
-                const writer = cs.writable.getWriter();
-                writer.write(bytes);
-                writer.close();
-                return new Response(cs.readable).arrayBuffer()
-        }}
-
         async function connectWebSocket() {{
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${{protocol}}//${{window.location.hostname}}:8081/ws/${{windowId}}`;
@@ -321,6 +354,8 @@
                     if (data.image) {{
                         document.getElementById('windowImage').src = data.image;
                     }} else if (data.compressed_image) {{
+                        stats.framesReceived++;
+                        stats.lastFrameTime = Date.now();
                         decompress(data.compressed_image).then((decompressed) => {{
                             const base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(decompressed)));
                             document.getElementById('windowImage').src = `data:image/webp;base64,${{base64String}}`
@@ -361,7 +396,6 @@
         }}
         
         async function sendMessage(message) {{
-            console.log('Sending message', message)
             if (useWebTransport && datagramWriter) {{
                 try {{
                     const data = new TextEncoder().encode(JSON.stringify(message));
@@ -380,7 +414,7 @@
         // Mouse and keyboard event handling
         const img = document.getElementById('windowImage');
         
-        img.addEventListener('click', (e) => {{
+        img.addEventListener('mousedown', (e) => {{
             const rect = e.target.getBoundingClientRect();
             const scaleX = e.target.naturalWidth / rect.width;
             const scaleY = e.target.naturalHeight / rect.height;
@@ -388,7 +422,18 @@
             const y = Math.round(e.offsetY * scaleY);
             
             sendMessage({{type: 'mousedown', x, y, button: 1}});
-            setTimeout(() => sendMessage({{type: 'mouseup', x, y, button: 1}}), 100);
+            // setTimeout(() => sendMessage({{type: 'mouseup', x, y, button: 1}}), 100);
+        }});
+
+        img.addEventListener('mouseup', (e) => {{
+            const rect = e.target.getBoundingClientRect();
+            const scaleX = e.target.naturalWidth / rect.width;
+            const scaleY = e.target.naturalHeight / rect.height;
+            const x = Math.round(e.offsetX * scaleX);
+            const y = Math.round(e.offsetY * scaleY);
+            sendMessage({{type: 'mouseup', x, y, button: 1}});
+            // TODO: I also need to actually use the buttons here, to handle every kind of click correctly
+            // setTimeout(() => sendMessage({{type: 'mouseup', x, y, button: 1}}), 100);
         }});
         
         img.addEventListener('contextmenu', (e) => {{
@@ -400,7 +445,7 @@
             const y = Math.round(e.offsetY * scaleY);
 
             sendMessage({{type: 'mousedown', x, y, button: 3}});
-            setTimeout(() => sendMessage({{type: 'mouseup', x, y, button: 3}}), 100);
+            // setTimeout(() => sendMessage({{type: 'mouseup', x, y, button: 3}}), 100);
         }});
         
 
@@ -410,7 +455,6 @@
             const scaleY = e.target.naturalHeight / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
-            console.log('mousemove')
             sendMessage({{type: 'mousemove', x, y, button: 1}});
         }}, 50)
 

@@ -18,8 +18,6 @@ from webx11.settings import SettingsManager
 from webx11 import websockets
 from webx11 import webtransport
 
-FPS = 30
-
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in separate threads"""
     def __init__(self, window_manager, *args, **kwargs):
@@ -53,8 +51,9 @@ async def main_async(executable_path):
     settings = SettingsManager('settings.json')
 
     # Check if Xvfb is available
+    process = None
     try:
-        subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
+        process = subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
     except subprocess.CalledProcessError:
         print("Error: Xvfb is not installed or not in PATH")
         print("Install it with: sudo apt-get install xvfb")
@@ -67,7 +66,8 @@ async def main_async(executable_path):
     webtransport_server = await webtransport.run_webtransport_server(window_manager, WEBTRANSPORT_PORT)
 
     # Start window broadcast
-    websocket_handler.start_window_broadcast(interval=0.05) # TODO Check optimizations for this interval
+    # websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2)) # TODO Check optimizations for this interval
+    websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2)) # TODO Check optimizations for this interval
     # webtransport_server.start_window_broadcast(interval=1000/FPS)
 
     # Register cleanup function
@@ -100,7 +100,7 @@ async def main_async(executable_path):
     
 
     # Creating the display
-    display = window_manager.create_window_display()
+    display = window_manager.create_window_display(settings.max_width, settings.max_height)
     display.quality = settings.image_quality
     display.dpi = settings.dpi
 
@@ -127,6 +127,7 @@ async def main_async(executable_path):
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
+        process.terminate()
         websocket_server.close()
         await websocket_server.wait_closed()
         # TODO: Make sure that the webtransport server is closed too

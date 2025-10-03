@@ -22,6 +22,13 @@ class SettingsManager:
             dpi = self.settings.get('dpi')
             if dpi <= 1500 and dpi >= 100:
                 self.dpi = dpi
+        if isinstance(self.settings.get('max_width'), int):
+            self.max_width = self.settings.get('max_width')
+        if isinstance(self.settings.get('max_height'), int):
+            self.max_height = self.settings.get('max_height')
+        if isinstance(self.settings.get('max_fps'), int):
+            self.fps = self.settings.get('max_fps')
+            self.max_fps = self.settings.get('max_fps')
         return
     
     def dump_json(self):

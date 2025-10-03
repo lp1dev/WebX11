@@ -1,4 +1,3 @@
-import websockets
 import subprocess
 import asyncio
 import hashlib
@@ -7,14 +6,14 @@ import json
 import time
 import os
 from datetime import datetime
+from webx11.settings import SettingsManager
 
 IMAGES_SENT = 0
-FPS = 30
 LAST_FRAME = datetime.now()
 
 # Datagram settings
-MAX_DATAGRAM_SIZE = 1200  # Safe size for most networks
-CHUNK_HEADER_SIZE = 16  # bytes for metadata (frame_id, chunk_index, total_chunks, etc.)
+MAX_DATAGRAM_SIZE = 1100  # Safe size for most networks, 1170 seems to be the highest value possible in my tests. I seem to get stuck at about 4 FPS with a size of 30 and get about 8 with 500
+CHUNK_HEADER_SIZE = 18  # bytes for metadata (frame_id, chunk_index, total_chunks, etc.)
 
 try:
     from aioquic.asyncio import QuicConnectionProtocol, serve
@@ -47,6 +46,7 @@ class WebTransportHandler:
         self.window_id = window_id
         self.running = True
         self.frame_counter = 0
+        self.settings = SettingsManager('settings.json')
         
     def h3_event_received(self, event: H3Event):
         """Handle H3 events for this session"""
@@ -99,6 +99,8 @@ class WebTransportHandler:
             if data.get('height') and data.get('width'):
                 if window_display.height != data.get('height') or data.get('width') != window_display.width:
                     window_display.force_resize(data.get('height'), data.get('width'))
+                    await asyncio.sleep(0.1)
+                    await self.send_window_update()
     
     async def handle_mouse_event(self, data, pressed):
         x, y = data.get('x'), data.get('y')
@@ -108,15 +110,15 @@ class WebTransportHandler:
             window_display = self.window_manager.get_window_display(self.window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_mouse_event(x, y, button, pressed)
-                self.send_control_message({
-                    'type': 'input_result',
-                    'input_type': 'mousedown' if pressed else 'mouseup',
-                    'success': success,
-                    'x': x, 'y': y, 'button': button
-                })
-                if success:
-                    await asyncio.sleep(0.1)
-                    await self.send_window_update()
+                # self.send_control_message({
+                #     'type': 'input_result',
+                #     'input_type': 'mousedown' if pressed else 'mouseup',
+                #     'success': success,
+                #     'x': x, 'y': y, 'button': button
+                # })
+                # if success:
+                #     await asyncio.sleep(0.1)
+                #     await self.send_window_update()
     
     async def handle_mouse_move(self, data):
         x, y = data.get('x'), data.get('y')
@@ -137,15 +139,6 @@ class WebTransportHandler:
             window_display = self.window_manager.get_window_display(self.window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_scroll_event(x, y, delta_y)
-                self.send_control_message({
-                    'type': 'input_result',
-                    'input_type': 'scroll',
-                    'success': success,
-                    'x': x, 'y': y, 'deltaY': delta_y
-                })
-                if success:
-                    await asyncio.sleep(0.1)
-                    await self.send_window_update()
     
     async def handle_key_event(self, data, pressed):
         key = data.get('key')
@@ -153,15 +146,7 @@ class WebTransportHandler:
             window_display = self.window_manager.get_window_display(self.window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_key_event_by_name(key, pressed)
-                self.send_control_message({
-                    'type': 'input_result',
-                    'input_type': 'keydown' if pressed else 'keyup',
-                    'success': success,
-                    'key': key
-                })
-                if success and not pressed:
-                    await asyncio.sleep(0.1)
-                    await self.send_window_update()
+                print(key, pressed)
     
     async def handle_text_input(self, data):
         text = data.get('text', '')
@@ -169,15 +154,6 @@ class WebTransportHandler:
             window_display = self.window_manager.get_window_display(self.window_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_text_input(text)
-                self.send_control_message({
-                    'type': 'input_result',
-                    'input_type': 'text',
-                    'success': success,
-                    'text': text
-                })
-                if success:
-                    await asyncio.sleep(0.1)
-                    await self.send_window_update()
     
     def send_control_message(self, message):
         """Send control message via datagram"""
@@ -191,21 +167,21 @@ class WebTransportHandler:
         """Continuously send window updates"""
         while self.running:
             await self.send_window_update()
-            await asyncio.sleep(1.0 / (FPS * 2)) # 60 fps atm
+            await asyncio.sleep(round(1.0 / self.settings.fps, 2))
 
     async def send_window_update(self, force=False):
         """Send window image via datagrams (chunked)"""
         global IMAGES_SENT, LAST_FRAME
         try:
             delta = datetime.now() - LAST_FRAME
-            framerate_delta = 1000000 / FPS  # microseconds
+            framerate_delta = 1000000 / self.settings.fps  # microseconds
             if delta.seconds == 0 and delta.microseconds < framerate_delta:
                 return
             LAST_FRAME = datetime.now()
         
             window_display = self.window_manager.get_window_display(self.window_id)
             if window_display:
-                window_image = window_display.capture_window(force=force)
+                window_image = window_display.capture_window(compressed=True, force=force)
                 if window_image:
                     IMAGES_SENT += 1
                     self.frame_counter = (self.frame_counter + 1) % 65536
@@ -213,7 +189,7 @@ class WebTransportHandler:
                     print(f"[Send image #{IMAGES_SENT} via datagrams (frame {self.frame_counter}) for window {self.window_id}, size: {len(window_image)} bytes]")
                 
                     # Calculate chunk size (leaving room for header)
-                    chunk_payload_size = MAX_DATAGRAM_SIZE - CHUNK_HEADER_SIZE - 30
+                    chunk_payload_size = MAX_DATAGRAM_SIZE - CHUNK_HEADER_SIZE
                     total_chunks = (len(window_image) + chunk_payload_size - 1) // chunk_payload_size
 
                     # Send chunks

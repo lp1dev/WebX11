@@ -1,6 +1,9 @@
 {
   "resize_mode": "resize-x11",
   "transport": "webtransport",
-  "image_quality": 10,
-  "dpi": 150
+  "image_quality": 80,
+  "dpi": 200,
+  "max_width": 3440,
+  "max_height": 1440,
+  "max_fps": 30
 }
