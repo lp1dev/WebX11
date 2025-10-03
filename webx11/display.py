@@ -136,7 +136,6 @@ class SingleWindowDisplay:
     
     def smart_resize(self):
         """Automatically resize based on the inner windows sizes"""
-
         max_width, max_height, max_x, max_y = 0, 0, 0, 0
 
         children = self.x11_display.screen().root.query_tree().children
