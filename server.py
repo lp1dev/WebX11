@@ -13,7 +13,7 @@ from sys import argv
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
 from webx11.api_handler import APIHandler
-from webx11.display import WindowDisplayManager
+from webx11.display import DisplayManager
 from webx11.settings import SettingsManager
 from webx11 import websockets
 from webx11 import webtransport
@@ -51,16 +51,15 @@ async def main_async(executable_path):
     settings = SettingsManager('settings.json')
 
     # Check if Xvfb is available
-    process = None
     try:
-        process = subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
+        subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
     except subprocess.CalledProcessError:
         print("Error: Xvfb is not installed or not in PATH")
         print("Install it with: sudo apt-get install xvfb")
         sys.exit(1)
     
     # Initialize managers
-    window_manager = WindowDisplayManager()
+    window_manager = DisplayManager()
     
     websocket_server, websocket_handler = await websockets.run_websocket_server(window_manager, HOST, WEBSOCKET_PORT)
     webtransport_server = await webtransport.run_webtransport_server(window_manager, WEBTRANSPORT_PORT)
@@ -100,7 +99,7 @@ async def main_async(executable_path):
     
 
     # Creating the display
-    display = window_manager.create_window_display(settings.max_width, settings.max_height)
+    display = window_manager.create_display(settings.max_width, settings.max_height)
     display.quality = settings.image_quality
     display.dpi = settings.dpi
 
@@ -122,6 +121,8 @@ async def main_async(executable_path):
     )
     time.sleep(1) # We are waiting for the window to be displayed, so that we can get its actual size
     display.smart_resize()
+
+    # Start the main loop
     try:
         await asyncio.Future()  # run forever
     except KeyboardInterrupt:

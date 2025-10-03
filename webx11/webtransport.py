@@ -37,13 +37,13 @@ def sha256(data: bytes) -> str:
 
 class WebTransportHandler:
     """Handler for a single WebTransport session"""
-    def __init__(self, session_id, http, window_manager, window_id, protocol):
+    def __init__(self, session_id, http, window_manager, display_id, protocol):
         self.session_id = session_id
         print('Session Id', session_id)
         self.http = http
         self.protocol = protocol 
         self.window_manager = window_manager
-        self.window_id = window_id
+        self.display_id = display_id
         self.running = True
         self.frame_counter = 0
         self.settings = SettingsManager('settings.json')
@@ -74,7 +74,7 @@ class WebTransportHandler:
     async def handle_client_message(self, data):
         """Handle incoming control messages"""
         msg_type = data.get('type')
-        window_display = self.window_manager.get_window_display(self.window_id)
+        window_display = self.window_manager.get_display(self.display_id)
         
         if not window_display or not window_display.input_handler:
             return
@@ -107,7 +107,7 @@ class WebTransportHandler:
         button = data.get('button', 1)
         
         if x is not None and y is not None:
-            window_display = self.window_manager.get_window_display(self.window_id)
+            window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_mouse_event(x, y, button, pressed)
                 # self.send_control_message({
@@ -123,7 +123,7 @@ class WebTransportHandler:
     async def handle_mouse_move(self, data):
         x, y = data.get('x'), data.get('y')
         if x is not None and y is not None:
-            window_display = self.window_manager.get_window_display(self.window_id)
+            window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
                 try:
                     window_display.input_handler.root.warp_pointer(
@@ -136,14 +136,14 @@ class WebTransportHandler:
         x, y = data.get('x'), data.get('y')
         delta_y = data.get('deltaY', 0)
         if x is not None and y is not None and delta_y != 0:
-            window_display = self.window_manager.get_window_display(self.window_id)
+            window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_scroll_event(x, y, delta_y)
     
     async def handle_key_event(self, data, pressed):
         key = data.get('key')
         if key:
-            window_display = self.window_manager.get_window_display(self.window_id)
+            window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_key_event_by_name(key, pressed)
                 print(key, pressed)
@@ -151,7 +151,7 @@ class WebTransportHandler:
     async def handle_text_input(self, data):
         text = data.get('text', '')
         if text:
-            window_display = self.window_manager.get_window_display(self.window_id)
+            window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_text_input(text)
     
@@ -179,14 +179,14 @@ class WebTransportHandler:
                 return
             LAST_FRAME = datetime.now()
         
-            window_display = self.window_manager.get_window_display(self.window_id)
+            window_display = self.window_manager.get_display(self.display_id)
             if window_display:
                 window_image = window_display.capture_window(compressed=True, force=force)
                 if window_image:
                     IMAGES_SENT += 1
                     self.frame_counter = (self.frame_counter + 1) % 65536
 
-                    print(f"[Send image #{IMAGES_SENT} via datagrams (frame {self.frame_counter}) for window {self.window_id}, size: {len(window_image)} bytes]")
+                    print(f"[Send image #{IMAGES_SENT} via datagrams (frame {self.frame_counter}) for window {self.display_id}, size: {len(window_image)} bytes]")
                 
                     # Calculate chunk size (leaving room for header)
                     chunk_payload_size = MAX_DATAGRAM_SIZE - CHUNK_HEADER_SIZE
@@ -264,25 +264,25 @@ class WebTransportProtocol(QuicConnectionProtocol):
 
         
         try:
-            window_id = int(path.strip('/').split('/')[-1])
-            print(f"WebTransport session requested for window {window_id}")
+            display_id = int(path.strip('/').split('/')[-1])
+            print(f"WebTransport session requested for window {display_id}")
         except (ValueError, IndexError):
             print(f"Invalid WebTransport path: {path}")
             self._send_response(stream_id, 404, end_stream=True)
             return
         
-        if not self.window_manager.get_window_display(window_id):
-            print(f"Window {window_id} not found")
+        if not self.window_manager.get_display(display_id):
+            print(f"Window {display_id} not found")
             self._send_response(stream_id, 404, end_stream=True)
             return
         
         self._handler = WebTransportHandler(
-            stream_id, self._http, self.window_manager, window_id, self
+            stream_id, self._http, self.window_manager, display_id, self
         )
         self._send_response(stream_id, 200)
         
         self._update_task = asyncio.create_task(self._handler.send_updates_loop())
-        print(f"WebTransport session established for window {window_id}")
+        print(f"WebTransport session established for window {display_id}")
     
     def _send_response(self, stream_id: int, status_code: int, end_stream=False):
         """Send HTTP response"""

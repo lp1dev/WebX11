@@ -3,15 +3,19 @@ import threading
 import Xlib
 import time
 import base64
+import io
+from PIL import Image
+
+from Xlib import X, XK
 from webx11.window import WindowScreenCapture, WindowInputHandler
 from io import BytesIO
 import gzip
 
 class SingleWindowDisplay:
-    def __init__(self, display_num, window_id, width=1920, height=1080, depth=24):
+    def __init__(self, display_num, display_id, width=1920, height=1080, depth=24):
         self.display_num = display_num
         self.display_name = f":{display_num}"
-        self.window_id = window_id
+        self.display_id = display_id
         self.width = width
         self.height = height
         self.x = 0
@@ -59,7 +63,7 @@ class SingleWindowDisplay:
             self.input_handler = WindowInputHandler(self)
             
             self.is_running = True
-            print(f"Window display started on {self.display_name} (ID: {self.window_id})")
+            print(f"Window display started on {self.display_name} (ID: {self.display_id})")
             return True
             
         except Exception as e:
@@ -79,7 +83,7 @@ class SingleWindowDisplay:
                 self.x11_display.close()
             except Xlib.error.ConnectionClosedError:
                 print("Display closed.")
-        print(f"Window display stopped (ID: {self.window_id})")
+        print(f"Window display stopped (ID: {self.display_id})")
     
     def get_display(self):
         return self.x11_display
@@ -154,70 +158,91 @@ class SingleWindowDisplay:
         self.y = max_y
         print('smart resized to h/w x+y', self.height, self.width, self.x, self.y)
     
+    def get_windows(self):
+        """ List the windows in a display """
+        children = self.x11_display.screen().root.query_tree().children
+        # Window controls on https://github.com/python-xlib/python-xlib/blob/4e8bbf8fc4941e5da301a8b3db8d27e98de68666/Xlib/xobject/drawable.py#L668
+        for w in children:
+            print(w, w.get_wm_name())
+            # TODO : The code below is a working poc to see how to interact with windows
+            #       I noticed that it is not possible to take a screenshot of a window that is not the front window and having multiple windows might cause issues
+            # geometry = w.get_geometry()
+            # print(geometry)
+            # if geometry.width > 1 and geometry.height > 1:
+            #     w.raise_window()
+            #     time.sleep(1) # We wait for the window to come to the front
+            #     raw = w.get_image(0, 0, geometry.width, geometry.height, X.ZPixmap, 0xffffffff)
+            #     image = Image.frombytes("RGB", (geometry.width, geometry.height), raw.data, "raw", "BGRX")
+            #     buffer = io.BytesIO()
+
+            #     image.save(buffer, format='WEBP', dpi=[200, 200], quality=50)
+                # print(base64.b64encode(buffer.getvalue()))
+            # print(raw)
+        return
+
     def get_window_info(self):
         """Get window information"""
         return {
-            'id': self.window_id,
+            'id': self.display_id,
             'display': self.display_name,
             'width': self.width,
             'height': self.height,
-            'name': f"Window {self.window_id}"
+            'name': f"Window {self.display_id}"
         }
 
-class WindowDisplayManager:
+class DisplayManager:
     def __init__(self):
-        self.windows = {}
+        self.displays = {}
         self.next_display_num = 2
-        self.next_window_id = 1
-        self.window_lock = threading.Lock()
+        self.next_display_id = 1
+        self.threadlock = threading.Lock()
         
-    def create_window_display(self, width=1920, height=1080):
-        """Create a new virtual display for a window"""
-        print('create_window_display:: width, height', width, height)
-        with self.window_lock:
+    def create_display(self, width=1920, height=1080):
+        """Create a new virtual display"""
+        print('create_display:: width, height', width, height)
+        with self.threadlock:
             display_num = self.next_display_num
             self.next_display_num += 1
             
-            window_id = self.next_window_id
-            self.next_window_id += 1
+            display_id = self.next_display_id
+            self.next_display_id += 1
             
-            # Create window display
-            window_display = SingleWindowDisplay(display_num, window_id, width, height)
+            # Create display
+            display = SingleWindowDisplay(display_num, display_id, width, height)
             
-            if window_display.start():
-                self.windows[window_id] = window_display
-                return window_display
+            if display.start():
+                self.displays[display_id] = display
+                return display
             return None
     
-    def remove_window_display(self, window_id):
+    def remove_display(self, display_id):
         """Remove a window display"""
-        with self.window_lock:
-            if window_id in self.windows:
-                win = self.windows[window_id]
-                del self.windows[window_id]
+        with self.threadlock:
+            if display_id in self.displays:
+                win = self.displays[display_id]
+                del self.displays[display_id]
                 win.stop()
 
-    def resize_window_display(self, window_id, width, height):
-        print('resize_window_display:: width, height', width, height)
-        print('in resize window display', window_id)
-        """Force resize a window display"""
-        with self.window_lock:
-            if window_id in self.windows:
-                print('Found window id', window_id)
-                win = self.windows[window_id]
+    def resize_display(self, display_id, width, height):
+        print('resize_display:: width, height', width, height)
+        """Force resize a display"""
+        with self.threadlock:
+            if display_id in self.displays:
+                print('Found window id', display_id)
+                win = self.displays[display_id]
                 win.force_resize(height, width)
     
-    def get_window_display(self, window_id):
+    def get_display(self, display_id):
         """Get a window display by ID"""
-        return self.windows.get(window_id)
+        return self.displays.get(display_id)
     
-    def get_all_windows(self):
-        """Get all window displays"""
-        return list(self.windows.values())
+    def get_all_displays(self):
+        """Get all displays"""
+        return list(self.displays.values())
     
     def stop_all(self):
-        """Stop all window displays"""
-        with self.window_lock:
-            for window in self.windows.values():
-                window.stop()
-            self.windows.clear()
+        """Stop all displays"""
+        with self.threadlock:
+            for display in self.displays.values():
+                display.stop()
+            self.displays.clear()

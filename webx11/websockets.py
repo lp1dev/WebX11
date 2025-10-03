@@ -17,62 +17,62 @@ class WebSocketHandler:
     async def handle_websocket(self, websocket, path="/"):
         path = websocket.request.path
         try:
-            window_id = int(path.strip('/').split('/')[-1])
+            display_id = int(path.strip('/').split('/')[-1])
         except (ValueError, IndexError):
             print(f"Invalid WebSocket path: {path}")
             return
         
-        window_display = self.window_manager.get_window_display(window_id)
+        window_display = self.window_manager.get_display(display_id)
         if not window_display:
-            print(f"Window {window_id} not found for WebSocket connection")
+            print(f"Window {display_id} not found for WebSocket connection")
             return
             
-        client = {"websocket": websocket, "window_id": window_id}
+        client = {"websocket": websocket, "display_id": display_id}
         self.connected_clients.append(client)
-        print(f"WebSocket client connected for window {window_id}. Total clients: {len(self.connected_clients)}")
+        print(f"WebSocket client connected for window {display_id}. Total clients: {len(self.connected_clients)}")
         
         try:
             await self.send_settings(websocket)
-            await self.send_window_update(websocket, window_id, force=True)
+            await self.send_window_update(websocket, display_id, force=True)
             async for message in websocket:
-                await self.handle_client_message(websocket, message, window_id)
+                await self.handle_client_message(websocket, message, display_id)
         except websockets.exceptions.ConnectionClosed:
-            print(f"WebSocket connection closed for window {window_id}")
+            print(f"WebSocket connection closed for window {display_id}")
         finally:
             for client in self.connected_clients:
                 if client.get('websocket') == websocket:
                     self.connected_clients.remove(client)
-            print(f"WebSocket client disconnected for window {window_id}. Total clients: {len(self.connected_clients)}")
+            print(f"WebSocket client disconnected for window {display_id}. Total clients: {len(self.connected_clients)}")
     
     async def send_settings(self, websocket):
         await websocket.send(self.settings.dump_json())
 
-    async def handle_client_message(self, websocket, message, window_id):
+    async def handle_client_message(self, websocket, message, display_id):
         """Handle incoming WebSocket messages for a specific window"""
         try:
             data = json.loads(message)
             msg_type = data.get('type')
             
-            window_display = self.window_manager.get_window_display(window_id)
+            window_display = self.window_manager.get_display(display_id)
             if not window_display or not window_display.input_handler:
                 return
             
             if msg_type == 'mousedown':
-                await self.handle_mouse_event(websocket, data, True, window_id)
+                await self.handle_mouse_event(websocket, data, True, display_id)
             elif msg_type == 'mouseup':
-                await self.handle_mouse_event(websocket, data, False, window_id)
+                await self.handle_mouse_event(websocket, data, False, display_id)
             elif msg_type == 'mousemove':
-                await self.handle_mouse_move(websocket, data, window_id)
+                await self.handle_mouse_move(websocket, data, display_id)
             elif msg_type == 'scroll':
-                await self.handle_scroll_event(websocket, data, window_id)
+                await self.handle_scroll_event(websocket, data, display_id)
             elif msg_type == 'keydown':
-                await self.handle_key_event(websocket, data, True, window_id)
+                await self.handle_key_event(websocket, data, True, display_id)
             elif msg_type == 'keyup':
-                await self.handle_key_event(websocket, data, False, window_id)
+                await self.handle_key_event(websocket, data, False, display_id)
             elif msg_type == 'text_input':
-                await self.handle_text_input(websocket, data, window_id)
+                await self.handle_text_input(websocket, data, display_id)
             elif msg_type == 'refresh':
-                await self.send_window_update(websocket, window_id)
+                await self.send_window_update(websocket, display_id)
             elif msg_type == 'resize':
                 if data.get('height') and data.get('width'):
                     if window_display.height != data.get('height') or data.get('width') != window_display.width:
@@ -83,24 +83,24 @@ class WebSocketHandler:
         except Exception as e:
             print(f"Error handling client message: {e}")
     
-    async def handle_mouse_event(self, websocket, data, pressed, window_id):
+    async def handle_mouse_event(self, websocket, data, pressed, display_id):
         x = data.get('x')
         y = data.get('y')
         button = data.get('button', 1)
         print("click", button, x, y, pressed)
         
         if x is not None and y is not None:
-            window_display = self.window_manager.get_window_display(window_id)
+            window_display = self.window_manager.get_display(display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_mouse_event(x, y, button, pressed)
 
     
-    async def handle_mouse_move(self, websocket, data, window_id):
+    async def handle_mouse_move(self, websocket, data, display_id):
         x = data.get('x')
         y = data.get('y')
         
         if x is not None and y is not None:
-            window_display = self.window_manager.get_window_display(window_id)
+            window_display = self.window_manager.get_display(display_id)
             if window_display and window_display.input_handler:
                 try:
                     window_display.input_handler.root.warp_pointer(x + window_display.x, y + window_display.y)
@@ -108,43 +108,43 @@ class WebSocketHandler:
                 except Exception as e:
                     print(f"Mouse move error: {e}")
     
-    async def handle_scroll_event(self, websocket, data, window_id):
+    async def handle_scroll_event(self, websocket, data, display_id):
         x = data.get('x')
         y = data.get('y')
         delta_y = data.get('deltaY', 0)
         
         if x is not None and y is not None and delta_y != 0:
-            window_display = self.window_manager.get_window_display(window_id)
+            window_display = self.window_manager.get_display(display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_scroll_event(x, y, delta_y)
 
     
-    async def handle_key_event(self, websocket, data, pressed, window_id):
+    async def handle_key_event(self, websocket, data, pressed, display_id):
         key = data.get('key')
         
         if key:
-            window_display = self.window_manager.get_window_display(window_id)
+            window_display = self.window_manager.get_display(display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_key_event_by_name(key, pressed)
 
-    async def handle_text_input(self, websocket, data, window_id):
+    async def handle_text_input(self, websocket, data, display_id):
         text = data.get('text', '')
         
         if text:
-            window_display = self.window_manager.get_window_display(window_id)
+            window_display = self.window_manager.get_display(display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_text_input(text)
     
-    async def send_window_update(self, websocket, window_id, force=False):
+    async def send_window_update(self, websocket, display_id, force=False):
         global IMAGES_SENT
         try:
             print("IN SEND WINDOW UPDATE")
-            window_display = self.window_manager.get_window_display(window_id)
+            window_display = self.window_manager.get_display(display_id)
             if window_display:
                 window_image = window_display.capture_window(compressed=True, force=force)
                 if window_image:
                     IMAGES_SENT += 1
-                    print("[Send %s images via WebSocket (update) for window %s]" %(IMAGES_SENT, window_id))
+                    print("[Send %s images via WebSocket (update) for window %s]" %(IMAGES_SENT, display_id))
                     image_b64 = base64.b64encode(window_image).decode('utf-8')
                     message = {
                         'type': 'window_update',
@@ -155,7 +155,7 @@ class WebSocketHandler:
                     await websocket.send(json.dumps(message))
         except Exception as e:
             raise e
-            print(f"Error sending window update for {window_id}: {e}")
+            print(f"Error sending window update for {display_id}: {e}")
     
     async def broadcast_window_updates(self, interval=2.0):
         global IMAGES_SENT
@@ -165,11 +165,11 @@ class WebSocketHandler:
                     disconnected = []
                     for client in self.connected_clients:
                         try:
-                            if self.window_manager.get_window_display(client.get('window_id')) is not None:
-                                window_image = self.window_manager.get_window_display(client.get('window_id')).capture_window(compressed=True)
+                            if self.window_manager.get_display(client.get('display_id')) is not None:
+                                window_image = self.window_manager.get_display(client.get('display_id')).capture_window(compressed=True)
                                 if window_image:
                                     IMAGES_SENT += 1
-                                    print("[Send %s images via WebSocket (broadcast) for window %s]" %(IMAGES_SENT, client.get('window_id')))
+                                    print("[Send %s images via WebSocket (broadcast) for window %s]" %(IMAGES_SENT, client.get('display_id')))
                                     image_b64 = base64.b64encode(window_image).decode('utf-8')
                                     message = {
                                         'type': 'window_update',
