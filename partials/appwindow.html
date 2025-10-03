@@ -297,9 +297,7 @@
                 const writer = cs.writable.getWriter();
                 writer.write(bytes);
                 writer.close();
-                return new Response(cs.readable).arrayBuffer().then(function (arrayBuffer) {{
-                    return new TextDecoder().decode(arrayBuffer);
-                }});
+                return new Response(cs.readable).arrayBuffer()
         }}
 
         async function connectWebSocket() {{
@@ -324,7 +322,8 @@
                         document.getElementById('windowImage').src = data.image;
                     }} else if (data.compressed_image) {{
                         decompress(data.compressed_image).then((decompressed) => {{
-                            document.getElementById('windowImage').src = decompressed
+                            const base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(decompressed)));
+                            document.getElementById('windowImage').src = `data:image/webp;base64,${{base64String}}`
                         }}
                         )
                     }}

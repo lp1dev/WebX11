@@ -67,7 +67,7 @@ async def main_async(executable_path):
     webtransport_server = await webtransport.run_webtransport_server(window_manager, WEBTRANSPORT_PORT)
 
     # Start window broadcast
-    websocket_handler.start_window_broadcast(interval=0.5) # TODO Check optimizations for this interval
+    websocket_handler.start_window_broadcast(interval=0.05) # TODO Check optimizations for this interval
     # webtransport_server.start_window_broadcast(interval=1000/FPS)
 
     # Register cleanup function

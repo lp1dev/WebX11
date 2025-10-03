@@ -91,14 +91,14 @@ class SingleWindowDisplay:
                 self.last_frame = capture
                 self.has_updated = True
                 if compressed:
-                    image_b64 = base64.b64encode(capture).decode('utf-8')
-                    image_data = f"data:image/jpg;base64,{image_b64}"
+                    with BytesIO() as out:
+                        with gzip.GzipFile(fileobj=out, mode="w") as f:
+                            f.write(capture)
+                    # image_b64 = base64.b64encode(out.getvalue()).decode('utf-8')
+                    # image_data = f"data:image/jpg;base64,{image_b64}"
                     #
-                    out = BytesIO()
-                    with gzip.GzipFile(fileobj=out, mode="w") as f:
-                        f.write(image_data.encode('utf-8'))
-                    print('Compressed/Uncompressed', len(out.getvalue()), len(image_data))
-                    return base64.b64encode(out.getvalue()).decode('utf-8')
+                        print('Compressed/Uncompressed', len(out.getvalue()), len(capture))
+                        return out.getvalue()
                 return capture
             self.has_updated = False
         return None
