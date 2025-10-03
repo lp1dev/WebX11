@@ -1,0 +1,6 @@
+{
+  "resize_mode": "resize-x11",
+  "transport": "webtransport",
+  "image_quality": 10,
+  "dpi": 150
+}

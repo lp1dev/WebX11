@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebTransport Client</title>
+    <style>
+        body {{ margin: 0; padding: 0; background: #000; overflow: hidden; }}
+        .window {{ background: white; padding: 0; border-radius: 0; width: fit-content; }}
+        .window-image {{ cursor: default; }}
+        .connection-status {{
+            position: fixed;
+            top: 0px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-family: sans-serif;
+        }}
+        .status-webtransport {{ background: #4CAF50; color: white; }}
+        .status-websocket {{ background: #FF9800; color: white; }}
+        .status-disconnected {{ background: #f44336; color: white; }}
+        .stats {{
+            position: fixed;
+            top: 30px;
+            right: 10px;
+            padding: 5px 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            font-family: monospace;
+            font-size: 11px;
+            border-radius: 5px;
+        }}
+    </style>
+    <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+</head>
+<body>
+    <div id="connectionStatus" class="connection-status status-disconnected">Connecting...</div>
+    <div id="stats" class="stats"></div>
+    <div class="window">
+        <img unselectable="on" style="user-select:none;" id="windowImage" class="window-image" src="" alt="Window" draggable="false">
+    </div>
+    
+    <script>
+        const debounce_timeout = 10;
+        const timeouts = []
+        const runstack = []
+
+        function debounce(func, timeout = debounce_timeout){{
+            let timer;
+            return (...args) => {{
+                clearTimeout(timer);
+                timer = setTimeout(() => {{ func.apply(this, args); }}, timeout);
+            }};
+        }}
+
+        const windowId = {window_id}; // Set your window ID here
+        let transport = null;
+        let ws = null;
+        let datagramWriter = null;
+        let useWebTransport = false;
+        
+        // Frame reassembly state
+        let currentFrame = {{
+            id: null,
+            chunks: new Map(),
+            totalChunks: 0,
+            receivedChunks: 0
+        }};
+        
+        // Stats
+        let stats = {{
+            framesReceived: 0,
+            framesDropped: 0,
+            chunksReceived: 0,
+            lastFrameTime: Date.now()
+        }};
+        
+        // Try WebTransport first, fallback to WebSocket
+        async function connectWebTransport() {{
+            if (!window.WebTransport) {{
+                console.log('WebTransport not supported, falling back to WebSocket');
+                await connectWebSocket();
+                return;
+            }}
+            
+            try {{
+                const hostname = window.location.hostname || 'localhost';
+                const wtUrl = `https://${{hostname}}:4433/wt/${{windowId}}`;
+                let connected = false;
+                transport = new WebTransport(wtUrl);
+
+                setTimeout(() => {{
+                    if (!connected) {{
+                        console.log('Falling back to WebSocket');
+                        connectWebSocket();
+                        throw new Error('WebTransport:: TimeoutError');
+                    }}
+                }}, 2000);
+                
+                await transport.ready;
+                connected = true;
+                useWebTransport = true;
+                updateStatus('webtransport');
+                console.log('WebTransport connected');
+                
+                datagramWriter = transport.datagrams.writable.getWriter();
+                
+                // Handle incoming datagrams
+                handleIncomingDatagrams();
+                
+                transport.closed.then(() => {{
+                    console.log('WebTransport closed');
+                    useWebTransport = false;
+                    updateStatus('disconnected');
+                    setTimeout(connectWebTransport, 2000);
+                }}).catch(err => {{
+                    console.error('WebTransport error:', err);
+                    useWebTransport = false;
+                    updateStatus('disconnected');
+                    setTimeout(connectWebTransport, 2000);
+                }});
+                
+            }} catch (error) {{
+                console.error('WebTransport connection failed:', error);
+                console.log('Falling back to WebSocket');
+                await connectWebSocket();
+            }}
+        }}
+        async function serverSync(settings) {{
+            console.log('Settings :: ', window.settings)
+            resize()
+            clearInterval(window.setupInterval)
+        }}
+
+        const resize = debounce(() => {{
+            if (window.settings.resize_mode == 'resize-x11') {{
+                    sendMessage({{
+                        type: 'resize',
+                        width: document.documentElement.clientWidth,
+                        height: document.documentElement.clientHeight 
+                    }});
+                }}
+            }}, 100)
+
+    async function handleIncomingDatagrams() {{
+    try {{
+        const reader = transport.datagrams.readable.getReader();
+        console.log('Started listening for datagrams...');
+        
+        while (true) {{
+            const {{ value, done }} = await reader.read();
+            
+            if (done) break;
+            
+            if (value.byteLength > 16 && value[0] !== 123) {{
+                handleImageChunk(value);
+            }} else {{
+                handleControlMessage(value);
+            }}
+        }}
+    }} catch (error) {{
+        console.error('Error reading datagrams:', error);
+    }}
+}}
+        
+        function handleControlMessage(data) {{
+            try {{
+                const message = JSON.parse(new TextDecoder().decode(data));
+                // console.log('Control message:', message, message.frame);
+            }} catch (e) {{
+                console.error('Error parsing control message:', e);
+            }}
+        }}
+        
+        function handleImageChunk(data) {{
+            stats.chunksReceived++;
+            
+            // Parse header (16 bytes)
+            const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+            const frameId = view.getUint16(0);
+            const chunkIndex = view.getUint16(2);
+            const totalChunks = view.getUint16(4);
+            const dataSize = view.getUint32(6);
+            const timestamp = Number(view.getBigUint64(10));
+            
+            // Extract chunk data
+            const chunkData = data.slice(18, 18 + dataSize);
+            
+            // If this is a new frame, reset state
+            if (currentFrame.id !== frameId) {{
+                if (currentFrame.id !== null && currentFrame.receivedChunks < currentFrame.totalChunks) {{
+                    stats.framesDropped++;
+                    console.log(`Frame ${{currentFrame.id}} incomplete: ${{currentFrame.receivedChunks}}/${{currentFrame.totalChunks}} chunks`);
+                }}
+                
+                currentFrame = {{
+                    id: frameId,
+                    chunks: new Map(),
+                    totalChunks: totalChunks,
+                    receivedChunks: 0,
+                    timestamp: timestamp
+                }};
+            }}
+            
+            // Store chunk if not already received
+            if (!currentFrame.chunks.has(chunkIndex)) {{
+                currentFrame.chunks.set(chunkIndex, chunkData);
+                currentFrame.receivedChunks++;
+            }}
+            
+            // If we have all chunks, reassemble and display
+            if (currentFrame.receivedChunks === currentFrame.totalChunks) {{
+                reassembleAndDisplay();
+            }}
+            
+            // updateStats();
+        }}
+        
+        function reassembleAndDisplay() {{
+            try {{
+                // Calculate total size
+                let totalSize = 0;
+                for (const chunk of currentFrame.chunks.values()) {{
+                    totalSize += chunk.length;
+                }}
+                
+                // Reassemble chunks in order
+                const fullData = new Uint8Array(totalSize);
+                let offset = 0;
+                for (let i = 0; i < currentFrame.totalChunks; i++) {{
+                    const chunk = currentFrame.chunks.get(i);
+                    if (!chunk) {{
+                        console.error(`Missing chunk ${{i}} for frame ${{currentFrame.id}}`);
+                        return;
+                    }}
+                    fullData.set(chunk, offset);
+                    offset += chunk.length;
+                }}
+                
+                // Display image
+                const blob = new Blob([fullData], {{ type: 'image/jpeg' }});
+                const imgUrl = URL.createObjectURL(blob);
+                const img = document.getElementById('windowImage');
+                
+
+                // var reader = new FileReader();
+                // reader.readAsDataURL(blob); 
+                // reader.onloadend = function() {{
+                // var base64data = reader.result;                
+                //     img.src = base64data;
+
+                // }}
+
+                // Clean up old blob URL
+                if (img.src && img.src.startsWith('blob:')) {{
+                    URL.revokeObjectURL(img.src);
+                }}
+                
+                img.src = imgUrl;
+                
+                stats.framesReceived++;
+                stats.lastFrameTime = Date.now();
+                
+                // console.log(`Frame ${{currentFrame.id}} complete: ${{currentFrame.totalChunks}} chunks, ${{totalSize}} bytes`);
+                
+            }} catch (error) {{
+                console.error('Error reassembling frame:', error);
+            }}
+        }}
+        
+        function updateStats() {{
+            const fps = stats.framesReceived > 0 ? 
+                (1000 / (Date.now() - stats.lastFrameTime)).toFixed(1) : 0;
+            
+            document.getElementById('stats').innerHTML = `
+                Frames: ${{stats.framesReceived}} | Dropped: ${{stats.framesDropped}}<br>
+                Chunks: ${{stats.chunksReceived}}<br>
+                Current: ${{currentFrame.receivedChunks}}/${{currentFrame.totalChunks}}
+            `;
+        }}
+
+        async function setup() {{
+            const request = await fetch("/settings.json")
+            let response = await request.json()
+            window.settings = response.settings
+            console.log(window.settings, window.settings.transport)
+            if (window.settings && window.settings.transport == 'webtransport') {{
+                connectWebTransport()
+            }} else {{
+                console.log(window.settings, window.settings.transport)
+                connectWebSocket()
+            }}
+        }}
+        
+        const decompress = base64string => {{
+                const bytes = Uint8Array.from(atob(base64string), c => c.charCodeAt(0));
+                const cs = new DecompressionStream('gzip');
+                const writer = cs.writable.getWriter();
+                writer.write(bytes);
+                writer.close();
+                return new Response(cs.readable).arrayBuffer().then(function (arrayBuffer) {{
+                    return new TextDecoder().decode(arrayBuffer);
+                }});
+        }}
+
+        async function connectWebSocket() {{
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${{protocol}}//${{window.location.hostname}}:8081/ws/${{windowId}}`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {{
+                useWebTransport = false;
+                updateStatus('websocket');
+                console.log('WebSocket connected');
+            }};
+            
+            ws.onmessage = (event) => {{
+                const data = JSON.parse(event.data);
+                if (data.settings) {{
+                    serverSync(data.settings)
+                }}
+                if (data.type === 'window_update') {{
+                    if (data.image) {{
+                        document.getElementById('windowImage').src = data.image;
+                    }} else if (data.compressed_image) {{
+                        decompress(data.compressed_image).then((decompressed) => {{
+                            document.getElementById('windowImage').src = decompressed
+                        }}
+                        )
+                    }}
+                }}
+            }};
+            
+            ws.onclose = () => {{
+                updateStatus('disconnected');
+                setTimeout(connectWebSocket, 2000);
+            }};
+            
+            ws.onerror = (error) => {{
+                console.error('WebSocket error:', error);
+            }};
+        }}
+        
+        function updateStatus(status) {{
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.className = 'connection-status';
+            
+            switch(status) {{
+                case 'webtransport':
+                    statusEl.classList.add('status-webtransport');
+                    statusEl.textContent = 'WebTransport (Datagrams)';
+                    break;
+                case 'websocket':
+                    statusEl.classList.add('status-websocket');
+                    statusEl.textContent = 'WebSocket';
+                    break;
+                case 'disconnected':
+                    statusEl.classList.add('status-disconnected');
+                    statusEl.textContent = 'Disconnected';
+                    break;
+            }}
+        }}
+        
+        async function sendMessage(message) {{
+            console.log('Sending message', message)
+            if (useWebTransport && datagramWriter) {{
+                try {{
+                    const data = new TextEncoder().encode(JSON.stringify(message));
+                    await datagramWriter.write(data);
+                }} catch (error) {{
+                    console.error('Error sending via WebTransport:', error);
+                }}
+            }} else if (ws && ws.readyState === WebSocket.OPEN) {{
+                ws.send(JSON.stringify(message));
+            }}
+        }}
+        
+        // Front-end event handling
+        addEventListener("resize", resize)
+
+        // Mouse and keyboard event handling
+        const img = document.getElementById('windowImage');
+        
+        img.addEventListener('click', (e) => {{
+            const rect = e.target.getBoundingClientRect();
+            const scaleX = e.target.naturalWidth / rect.width;
+            const scaleY = e.target.naturalHeight / rect.height;
+            const x = Math.round(e.offsetX * scaleX);
+            const y = Math.round(e.offsetY * scaleY);
+            
+            sendMessage({{type: 'mousedown', x, y, button: 1}});
+            setTimeout(() => sendMessage({{type: 'mouseup', x, y, button: 1}}), 100);
+        }});
+        
+        img.addEventListener('contextmenu', (e) => {{
+            e.preventDefault();
+            const rect = e.target.getBoundingClientRect();
+            const scaleX = e.target.naturalWidth / rect.width;
+            const scaleY = e.target.naturalHeight / rect.height;
+            const x = Math.round(e.offsetX * scaleX);
+            const y = Math.round(e.offsetY * scaleY);
+
+            sendMessage({{type: 'mousedown', x, y, button: 3}});
+            setTimeout(() => sendMessage({{type: 'mouseup', x, y, button: 3}}), 100);
+        }});
+        
+
+        const onMouseMove = debounce((e) => {{
+            const rect = e.target.getBoundingClientRect();
+            const scaleX = e.target.naturalWidth / rect.width;
+            const scaleY = e.target.naturalHeight / rect.height;
+            const x = Math.round(e.offsetX * scaleX);
+            const y = Math.round(e.offsetY * scaleY);
+            console.log('mousemove')
+            sendMessage({{type: 'mousemove', x, y, button: 1}});
+        }}, 50)
+
+        img.addEventListener('mousemove', onMouseMove);
+        
+        img.addEventListener('wheel', (e) => {{
+            const rect = e.target.getBoundingClientRect();
+            const scaleX = e.target.naturalWidth / rect.width;
+            const scaleY = e.target.naturalHeight / rect.height;
+            const x = Math.round(e.offsetX * scaleX);
+            const y = Math.round(e.offsetY * scaleY);
+            
+            sendMessage({{type: 'scroll', x, y, deltaY: e.deltaY}});
+            e.preventDefault();
+        }});
+        
+        document.addEventListener('keydown', (e) => {{
+            const key = getKeyFromEvent(e);
+            if (key) {{
+                sendMessage({{type: 'keydown', key}});
+                e.preventDefault();
+            }}
+        }});
+        
+        document.addEventListener('keyup', (e) => {{
+            const key = getKeyFromEvent(e);
+            if (key) {{
+                sendMessage({{type: 'keyup', key}});
+                e.preventDefault();
+            }}
+        }});
+        
+        function getKeyFromEvent(e) {{
+            const specialKeys = {{
+                'Escape': 'escape', 'Enter': 'enter', 'Tab': 'tab', 'Backspace': 'backspace',
+                'Delete': 'delete', 'ArrowLeft': 'left', 'ArrowRight': 'right', 
+                'ArrowUp': 'up', 'ArrowDown': 'down', 'Shift': 'shift', 'Control': 'control',
+                'Alt': 'alt', 'Meta': 'super', ' ': 'space'
+            }};
+            
+            if (specialKeys[e.key]) return specialKeys[e.key];
+            if (e.key.match(/^F[1-9]$|^F1[0-2]$/)) return e.key.toLowerCase();
+            if (e.key.length === 1) return e.key;
+            return null;
+        }}
+        
+        // Start connection
+        setup()
+        window.setupInterval = setInterval(() => {{
+            serverSync()
+        }}, 2000)
+
+        setInterval(updateStats, 500);
+    </script>
+</body>
+</html>
