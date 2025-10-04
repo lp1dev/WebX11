@@ -1,12 +1,6 @@
 import json
 import os
 
-# Get the directory where this module is installed
-module_dir = os.path.dirname(os.path.abspath(__file__))
-html_path = os.path.join(module_dir, "settings.json")
-
-with open(html_path, "r") as f:
-
 class SettingsManager:
     def __init__(self, filename='settings.json'):
         self.settings_file = filename
