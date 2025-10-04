@@ -2,6 +2,10 @@ import json
 from http.server import BaseHTTPRequestHandler
 from webx11.settings import SettingsManager
 from urllib.parse import urlparse
+import os
+
+module_dir = os.path.dirname(os.path.abspath(__file__))
+html_path = os.path.join(module_dir, "partials", "display.html")
 
 class APIHandler(BaseHTTPRequestHandler):
     def __init__(self, display_manager, *args, **kwargs):
@@ -142,7 +146,7 @@ class APIHandler(BaseHTTPRequestHandler):
         
         app_name = f"Display {display_id}"
     
-        with open("partials/display.html", "r") as f:
+        with open(html_path, "r") as f:
             html_content = f.read()
             html_content = html_content.format(top=0, left=0, app_name=app_name, display_id=display_id)
         self.wfile.write(html_content.encode('utf-8'))

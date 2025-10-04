@@ -1,10 +1,23 @@
 import json
+import os
+
+# Get the directory where this module is installed
+module_dir = os.path.dirname(os.path.abspath(__file__))
+html_path = os.path.join(module_dir, "settings.json")
+
+with open(html_path, "r") as f:
 
 class SettingsManager:
-    def __init__(self, filename):
+    def __init__(self, filename='settings.json'):
         self.settings_file = filename
-        with open(filename) as f:
-            self.settings = json.load(f)
+        if os.path.isfile(filename):
+            with open(filename) as f:
+                self.settings = json.load(f)
+        else:
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            settings = os.path.join(module_dir, "settings.json")
+            with open(settings) as f:
+                self.settings = json.load(f)
         self.check_settings()
 
     def check_settings(self):

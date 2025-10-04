@@ -10,6 +10,8 @@ WebX11 creates virtual X11 displays and streams them to web browsers using WebTr
 
 It's designed to be simple, fast, and easy to deploy for exposing desktop applications over HTTP in seconds.
 
+You're a sysadmin and need to open a GUI application on a remote server?
+
 **Key Features:**
 - 🚀 **Low latency streaming** via WebTransport (HTTP/3) or WebSocket fallback
 - 📐 **Automatic window resizing** based on browser viewport
@@ -50,7 +52,7 @@ pip install Pillow python-xlib websockets aioquic
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/webx11.git
+git clone https://github.com/lp1dev/webx11.git
 cd webx11
 ```
 
@@ -63,7 +65,7 @@ pip install -r requirements.txt
 
 4. Run the server:
 ```bash
-python -m server
+python -m webx11
 ```
 
 ## Configuration

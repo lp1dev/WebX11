@@ -13,7 +13,7 @@ class WebSocketHandler:
         self.window_manager = window_display_manager
         self.connected_clients = []
         self.window_update_task = None
-        self.settings = SettingsManager('settings.json')
+        self.settings = SettingsManager()
         self.lastupdate = None
         
     async def handle_websocket(self, websocket, path="/"):

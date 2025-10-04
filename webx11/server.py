@@ -14,7 +14,6 @@ from webx11.api_handler import APIHandler
 from webx11.display import DisplayManager
 from webx11.settings import SettingsManager
 from webx11 import websockets
-from webx11 import webtransport
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in separate threads"""
@@ -47,7 +46,10 @@ async def main_async():
     print("=" * 50)
     
     # Parsing settings
-    settings = SettingsManager('settings.json')
+    settings = SettingsManager()
+    if settings.transport == 'webtransport':
+        from webx11 import webtransport
+
 
     # Check if Xvfb is available
     try:
@@ -61,7 +63,8 @@ async def main_async():
     display_manager = DisplayManager()
     
     websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
-    webtransport_server = await webtransport.run_webtransport_server(display_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
+    if settings.transport == 'webtransport':
+        webtransport_server = await webtransport.run_webtransport_server(display_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
 
     # Start window broadcast
     websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2))
