@@ -63,7 +63,7 @@ async def main_async():
     display_manager = DisplayManager()
     
     websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
-    
+
     webtransport_server = None
     if settings.transport == 'webtransport':
         webtransport_server = await webtransport.run_webtransport_server(display_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
@@ -105,7 +105,7 @@ async def main_async():
         display = display_manager.create_display(settings.max_width, settings.max_height)
         display.quality = settings.image_quality
         display.dpi = settings.dpi
-        process = display.start_executable(argv[1])
+        process = display_manager.start_executable(argv[1])
 
     # Start the main loop
     try:
