@@ -1,10 +1,14 @@
 # WebX11
 
-Stream any GNU/Linux GUI application directly to a web browser with low latency and automatic window resizing. No VNC, no special client software, no websockify - just a simple HTTP server that makes desktop applications accessible through modern web protocols.
+Stream any GNU/Linux GUI application directly to a web browser with low latency and automatic window resizing. 
+
+No VNC, no special client software, no websockify - just a simple HTTP server that makes desktop applications accessible through modern web protocols.
 
 ## Overview
 
-WebX11 creates virtual X11 displays and streams them to web browsers using WebTransport (with WebSocket fallback). It's designed to be simple, fast, and easy to deploy for exposing desktop applications over HTTP in seconds.
+WebX11 creates virtual X11 displays and streams them to web browsers using WebTransport (with WebSocket fallback). 
+
+It's designed to be simple, fast, and easy to deploy for exposing desktop applications over HTTP in seconds.
 
 **Key Features:**
 - 🚀 **Low latency streaming** via WebTransport (HTTP/3) or WebSocket fallback
@@ -55,11 +59,11 @@ cd webx11
 pip install -r requirements.txt
 ```
 
-3. Create a `settings.json` file (see Configuration below)
+3. Edit the `settings.json` file (see Configuration below)
 
 4. Run the server:
 ```bash
-python -m webx11.main
+python -m server
 ```
 
 ## Configuration
@@ -262,7 +266,7 @@ If the server is started with no executable as a parameter, a display needs to b
 
 **WebSocket Mode:**
 - Frames sent as binary blobs
-- 8~15 FPS depending on configuration
+- 8~25 FPS depending on configuration
 - Control messages as JSON
 - Works everywhere, no special setup needed
 
@@ -283,6 +287,7 @@ The WebSockets and HTTP APIs use no encryption, keep that in mind.
 - **TLS Certificates**: WebTransport uses self-signed certificates by default
 - **can_start_executables**: Set to `false` in production to prevent arbitrary code execution
 - **No authentication**: Consider adding authentication for production deployments
+- **No encryption** : Bring your own, by putting a HTTPS/WSS reverse proxy in front of WebX11
 - **Network exposure**: By default, only binds to localhost
 
 ## Troubleshooting
