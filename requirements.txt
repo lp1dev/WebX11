@@ -1,0 +1,16 @@
+aioquic==1.2.0
+attrs==25.3.0
+certifi==2025.8.3
+cffi==2.0.0
+cryptography==46.0.2
+pillow==11.3.0
+pyasn1==0.6.1
+pyasn1_modules==0.4.2
+pycparser==2.23
+pylsqpack==0.3.22
+pyOpenSSL==25.3.0
+service-identity==24.2.0
+six==1.17.0
+typing_extensions==4.15.0
+websockets==15.0.1
+xlib==0.21

@@ -89,13 +89,11 @@ class WebSocketHandler:
         x = data.get('x')
         y = data.get('y')
         button = data.get('button', 1)
-        print("click", button, x, y, pressed)
         
         if x is not None and y is not None:
             window_display = self.window_manager.get_display(display_id)
             if window_display and window_display.input_handler:
-                success = window_display.input_handler.send_mouse_event(x, y, button, pressed)
-
+                window_display.input_handler.send_mouse_event(x, y, button, pressed)
     
     async def handle_mouse_move(self, websocket, data, display_id):
         x = data.get('x')

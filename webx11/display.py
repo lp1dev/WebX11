@@ -2,11 +2,9 @@ import subprocess
 import threading
 import Xlib
 import time
-import base64
-import io
-from PIL import Image
+import os
 
-from Xlib import X, XK
+from Xlib import X
 from webx11.window import WindowScreenCapture, WindowInputHandler
 from io import BytesIO
 import gzip
@@ -122,15 +120,16 @@ class SingleWindowDisplay:
         return None
     
     def force_resize(self, height, width):
+        # Always make sure that the size defined when starting the X server is smaller
+        # than the size you try to resize with!
         win = self.x11_display.screen().root
         self.height = height
         self.width = width
         self.x = 0
         self.y = 0
         print('force_resize:: expected new dimensions', height, width)
-
         print('force_resize:: geometry before', win.get_geometry())
-        
+
         win.configure(x=0, y=0, width=width, height=height, border_width=0)
         win.change_attributes(win_gravity=X.NorthWestGravity, bit_gravity=X.StaticGravity)
 
@@ -169,28 +168,6 @@ class SingleWindowDisplay:
         self.x = max_x
         self.y = max_y
         print('smart resized to h/w x+y', self.height, self.width, self.x, self.y)
-    
-    def get_windows(self):
-        """ List the windows in a display """
-        children = self.x11_display.screen().root.query_tree().children
-        # Window controls on https://github.com/python-xlib/python-xlib/blob/4e8bbf8fc4941e5da301a8b3db8d27e98de68666/Xlib/xobject/drawable.py#L668
-        for w in children:
-            print(w, w.get_wm_name())
-            # TODO : The code below is a working poc to see how to interact with windows
-            #       I noticed that it is not possible to take a screenshot of a window that is not the front window and having multiple windows might cause issues
-            # geometry = w.get_geometry()
-            # print(geometry)
-            # if geometry.width > 1 and geometry.height > 1:
-            #     w.raise_window()
-            #     time.sleep(1) # We wait for the window to come to the front
-            #     raw = w.get_image(0, 0, geometry.width, geometry.height, X.ZPixmap, 0xffffffff)
-            #     image = Image.frombytes("RGB", (geometry.width, geometry.height), raw.data, "raw", "BGRX")
-            #     buffer = io.BytesIO()
-
-            #     image.save(buffer, format='WEBP', dpi=[200, 200], quality=50)
-                # print(base64.b64encode(buffer.getvalue()))
-            # print(raw)
-        return
 
     def get_window_info(self):
         """Get window information"""
@@ -227,6 +204,28 @@ class DisplayManager:
                 return display
             return None
     
+    def start_executable(self, display_id, executable_path):
+        with self.threadlock:
+            if display_id in self.displays:
+                display = self.displays[display_id]
+                # Prepare environment with the new display
+                env = os.environ.copy()
+                env['DISPLAY'] = display.display_name
+                # Start the application
+                process = subprocess.Popen(
+                    executable_path,
+                    shell=True,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setsid
+                )
+                time.sleep(1) # We are waiting for the window to be displayed, so that we can get its actual size
+                display.smart_resize()
+                return process
+            raise Exception("Unknown display", display_id)
+
+
     def remove_display(self, display_id):
         """Remove a window display"""
         with self.threadlock:

@@ -40,11 +40,20 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
-        
         if path.startswith('/resize/'):
             self.handle_resize(parsed_path)
-        elif path == '/display':
+        elif path == '/display' or path == '/display/':
             self.handle_create_display()
+        elif path.startswith('/display/') and '/run' in path and self.settings.can_start_executables:
+            self.handle_start_executable_display(parsed_path)
+        else:
+            self.send_error(404, "Not Found")
+
+    def do_DELETE(self):
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        if path.startswith('/display/'):
+            self.handle_close_display(parsed_path)
         else:
             self.send_error(404, "Not Found")
     
@@ -65,6 +74,43 @@ class APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(self.settings.dump_json().encode('utf-8'))
 
+    def handle_start_executable_display(self, parsed_path):
+        display_id = None
+        try:
+            sections = parsed_path.path.split('/')
+            print(sections)
+            display_id = int(sections[2])
+        except (ValueError, IndexError) as e:
+            print(e)
+            self.send_error(404, "Invalid display ID. Must be an int.")
+            return
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length == 0:
+            self.send_error(400, "No data provided")
+            return
+        display = self.display_manager.get_display(display_id)
+        if not display:
+            self.send_error(404, "Display ID not found. You need to start a display first.")
+            return
+        try:
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data)
+            if data.get('executable') is None:
+                self.send_error(400, "Missing parameter: executable.")
+                return
+            
+            process = self.display_manager.start_executable(display_id, data.get('executable'))
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"message": "OK", "display": display.display_id, "process": process.pid}).encode('utf-8'))
+            
+        except json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON")
+        except Exception as e:
+            self.send_error(500, f"Server error: {str(e)}")
+
+
     def serve_display_list(self):
         self.send_response(200)
         self.send_cors_headers()
@@ -74,7 +120,6 @@ class APIHandler(BaseHTTPRequestHandler):
         displays = []
         for display in self.display_manager.get_all_displays():
             display_info = display.get_window_info()
-            windows = display.get_windows()
             displays.append(display_info)
         
         self.wfile.write(json.dumps(displays).encode('utf-8'))
@@ -88,7 +133,7 @@ class APIHandler(BaseHTTPRequestHandler):
         
         display = self.display_manager.get_display(display_id)
         if not display:
-            self.send_error(404, "Window not found")
+            self.send_error(404, "Display not found")
             return
         
         self.send_response(200)
@@ -102,7 +147,7 @@ class APIHandler(BaseHTTPRequestHandler):
             html_content = html_content.format(top=0, left=0, app_name=app_name, display_id=display_id)
         self.wfile.write(html_content.encode('utf-8'))
     
-    def handle_stop_application(self, parsed_path):
+    def handle_close_display(self, parsed_path):
         try:
             display_id = int(parsed_path.path.split('/')[-1])
         except (ValueError, IndexError):
@@ -136,7 +181,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"message": "OK", "display": display.display_name}).encode('utf-8'))
+            self.wfile.write(json.dumps({"message": "OK", "display": display.display_id}).encode('utf-8'))
             
         except json.JSONDecodeError:
             self.send_error(400, "Invalid JSON")

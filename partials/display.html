@@ -14,6 +14,7 @@
             border-radius: 5px;
             font-size: 12px;
             font-family: sans-serif;
+            display: none;
         }}
         .status-webtransport {{ background: #4CAF50; color: white; }}
         .status-websocket {{ background: #FF9800; color: white; }}
@@ -96,7 +97,9 @@
                 e.preventDefault();
                 stats.showFPS = !stats.showFPS;
                 const fpsEl = document.getElementById('fpsCounter');
+                const statusEl = document.getElementById('connectionStatus')
                 fpsEl.style.display = stats.showFPS ? 'block' : 'none';
+                statusEl.style.display = stats.showFPS ? 'block' : 'none'
                 if (stats.showFPS) {{
                     stats.fpsHistory = [];
                 }}

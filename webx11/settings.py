@@ -29,6 +29,10 @@ class SettingsManager:
         if isinstance(self.settings.get('max_fps'), int):
             self.fps = self.settings.get('max_fps')
             self.max_fps = self.settings.get('max_fps')
+        if isinstance(self.settings.get('can_start_executables'), bool):
+            self.can_start_executables = self.settings.get('can_start_executables')
+        else:
+            self.can_start_executables = False
         return
     
     def dump_json(self):

@@ -3,9 +3,7 @@
 Main X11 Web Display Server with HTTP API and WebTransport
 """
 
-import os
 import sys
-import time
 import atexit
 import asyncio
 import subprocess
@@ -20,24 +18,24 @@ from webx11 import webtransport
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in separate threads"""
-    def __init__(self, window_manager, *args, **kwargs):
-        self.window_manager = window_manager
+    def __init__(self, display_manager, *args, **kwargs):
+        self.display_manager = display_manager
         super().__init__(*args, **kwargs)
 
-def cleanup(window_manager, websocket_handler):
+def cleanup(display_manager, websocket_handler):
     """Cleanup function to stop all window displays on exit"""
     print("\nCleaning up...")
     websocket_handler.stop_window_broadcast()
-    window_manager.stop_all()
+    display_manager.stop_all()
 
 
-def handler_factory(window_manager):
+def handler_factory(display_manager):
     """Create a handler factory with the managers"""
     def create_handler(*args, **kwargs):
-        return APIHandler(window_manager, *args, **kwargs)
+        return APIHandler(display_manager, *args, **kwargs)
     return create_handler
 
-async def main_async(executable_path):
+async def main_async():
     # Configuration
     HOST = '0.0.0.0'
     HTTP_PORT = 8080
@@ -60,18 +58,16 @@ async def main_async(executable_path):
         sys.exit(1)
     
     # Initialize managers
-    window_manager = DisplayManager()
+    display_manager = DisplayManager()
     
-    websocket_server, websocket_handler = await websockets.run_websocket_server(window_manager, HOST, WEBSOCKET_PORT)
-    webtransport_server = await webtransport.run_webtransport_server(window_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
+    websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
+    webtransport_server = await webtransport.run_webtransport_server(display_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
 
     # Start window broadcast
-    # websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2)) # TODO Check optimizations for this interval
-    websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2)) # TODO Check optimizations for this interval
-    # webtransport_server.start_window_broadcast(interval=1000/FPS)
+    websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2))
 
     # Register cleanup function
-    atexit.register(lambda: cleanup(window_manager, websocket_handler))
+    atexit.register(lambda: cleanup(display_manager, websocket_handler))
     
     print(f"✅ X11 Web Display Server with HTTP API started!")
     print(f"🌐 HTTP interface: http://{HOST}:{HTTP_PORT}")
@@ -89,7 +85,7 @@ async def main_async(executable_path):
     
     # Create and start HTTP server
     # TODO replace the current HTTP server with something more robust using jinja2 templates
-    http_server = ThreadedHTTPServer(window_manager, (HOST, HTTP_PORT), handler_factory(window_manager))
+    http_server = ThreadedHTTPServer(display_manager, (HOST, HTTP_PORT), handler_factory(display_manager))
     
     # Run HTTP server in a separated thread
     import threading
@@ -97,31 +93,14 @@ async def main_async(executable_path):
     http_thread.daemon = True
     http_thread.start()
 
-    
-
-    # Creating the display
-    display = window_manager.create_display(settings.max_width, settings.max_height)
-    display.quality = settings.image_quality
-    display.dpi = settings.dpi
-
-    if not display:
-        raise Exception("Failed to create window display")
-            
-    # Prepare environment with the new display
-    env = os.environ.copy()
-    env['DISPLAY'] = display.display_name
-            
-    # Start the application
-    process = subprocess.Popen(
-        executable_path,
-        shell=True,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        preexec_fn=os.setsid
-    )
-    time.sleep(1) # We are waiting for the window to be displayed, so that we can get its actual size
-    display.smart_resize()
+    # If a parameter is passed, the executable is started
+    process = None
+    if len(sys.argv) > 1:
+        # Creating the display
+        display = display_manager.create_display(settings.max_width, settings.max_height)
+        display.quality = settings.image_quality
+        display.dpi = settings.dpi
+        process = display.start_executable(argv[1])
 
     # Start the main loop
     try:
@@ -129,18 +108,16 @@ async def main_async(executable_path):
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
-        process.terminate()
+        if process:
+            process.terminate()
         websocket_server.close()
         await websocket_server.wait_closed()
         # TODO: Make sure that the webtransport server is closed too
         http_server.shutdown()
-        window_manager.stop_all()
+        display_manager.stop_all()
 
 def main():
-    if len(argv) < 2:
-        print(f"""usage: {argv[0]} executable_file""")
-        return
-    asyncio.run(main_async(argv[1]))
+    asyncio.run(main_async())
 
 if __name__ == "__main__":
     main()
