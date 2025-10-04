@@ -1,6 +1,6 @@
 # WebX11
 
-Stream any GNU/Linux GUI application directly to a web browser with low latency and automatic window resizing. 
+Stream any GNU/Linux GUI application directly to a web browser with low(-enough) latency and automatic window resizing. 
 
 No VNC, no special client software, no websockify - just a simple HTTP server that makes desktop applications accessible through modern web protocols.
 
@@ -8,11 +8,11 @@ No VNC, no special client software, no websockify - just a simple HTTP server th
 
 WebX11 creates virtual X11 displays and streams them to web browsers using WebTransport (with WebSocket fallback). 
 
-It's designed to be simple, fast, and easy to deploy for exposing desktop applications over HTTP in seconds.
+It's designed to be simple, fast, and easy to deploy, and only have dependencies you probably already have.
 
 You're a sysadmin and need to open a GUI application on a remote server in a whim?
 
-Need to expose a GUI app for a lab? 
+Need to expose a GUI app for a lab?
 
 WebX11 has got you!
 
@@ -20,7 +20,7 @@ WebX11 has got you!
 
 **System Dependencies:**
 - `Xvfb` - Virtual framebuffer X server
-- `openssl` - For generating TLS certificates (WebTransport)
+- `openssl` (optional) - For generating TLS certificates (if you use WebTransport)
 
 ## Installation
 
@@ -39,7 +39,6 @@ Run the server:
 webx11 (executable)
 ```
 
-
 **Key Features:**
 - 🚀 **Low latency streaming** via WebTransport (HTTP/3) or WebSocket fallback
 - 📐 **Automatic window resizing** based on browser viewport
@@ -48,6 +47,9 @@ webx11 (executable)
 - ⚡ **Minimal dependencies** - just Xvfb and OpenSSL
 - 🎮 **Full input support** - mouse, keyboard, scroll, dead keys
 - 📊 **Built-in FPS counter** (press F3 to toggle)
+
+> **Note** : Regarding the latency. Realistically, you're not going to do some heavy gaming on this. But I'm currently streaming my terminal on my 2k screen and the 12 FPS I have are more than enough for this usage, especially with the low input latency!
+> Also, if you're able to do some optimizations and gain a few FPS, you're very welcome to make a PR \o/!
 
 ## How It Works
 
