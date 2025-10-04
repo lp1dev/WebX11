@@ -294,6 +294,8 @@ async def run_webtransport_server(window_manager, host, port):
                 max_datagram_frame_size=65536,
             )
             
+            if not os.path.exists("certs"):
+                os.makedirs("certs")
             if not os.path.exists("certs/cert.pem") or not os.path.exists("certs/key.pem"):
                 print("Generating self-signed certificate for WebTransport...")
                 subprocess.run([

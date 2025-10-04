@@ -10,24 +10,11 @@ WebX11 creates virtual X11 displays and streams them to web browsers using WebTr
 
 It's designed to be simple, fast, and easy to deploy for exposing desktop applications over HTTP in seconds.
 
-You're a sysadmin and need to open a GUI application on a remote server?
+You're a sysadmin and need to open a GUI application on a remote server in a whim?
 
-**Key Features:**
-- 🚀 **Low latency streaming** via WebTransport (HTTP/3) or WebSocket fallback
-- 📐 **Automatic window resizing** based on browser viewport
-- 🎯 **Direct X11 integration** - no VNC or intermediary protocols
-- 🔌 **Simple HTTP API** for creating and managing displays
-- ⚡ **Minimal dependencies** - just Xvfb and OpenSSL
-- 🎮 **Full input support** - mouse, keyboard, scroll, dead keys
-- 📊 **Built-in FPS counter** (press F3 to toggle)
+Need to expose a GUI app for a lab? 
 
-## How It Works
-
-1. WebX11 spawns virtual X displays using Xvfb
-2. Captures window content and encodes it as WebP
-3. Streams frames via WebTransport streams (or WebSocket)
-4. Sends input events (mouse/keyboard) back to X11
-5. Automatically resizes the X display to match browser window
+WebX11 has got you!
 
 ## Requirements
 
@@ -51,6 +38,24 @@ Run the server:
 ```bash
 webx11 (executable)
 ```
+
+
+**Key Features:**
+- 🚀 **Low latency streaming** via WebTransport (HTTP/3) or WebSocket fallback
+- 📐 **Automatic window resizing** based on browser viewport
+- 🎯 **Direct X11 integration** - no VNC or intermediary protocols
+- 🔌 **Simple HTTP API** for creating and managing displays
+- ⚡ **Minimal dependencies** - just Xvfb and OpenSSL
+- 🎮 **Full input support** - mouse, keyboard, scroll, dead keys
+- 📊 **Built-in FPS counter** (press F3 to toggle)
+
+## How It Works
+
+1. WebX11 spawns virtual X displays using Xvfb
+2. Captures window content and encodes it as WebP
+3. Streams frames via WebTransport streams (or WebSocket)
+4. Sends input events (mouse/keyboard) back to X11
+5. Automatically resizes the X display to match browser window
 
 ## Configuration
 
@@ -128,8 +133,16 @@ curl -X POST http://localhost:8080/display/1/run \
 
 Open your browser and navigate to:
 ```
-http://localhost:8080/display/1
+http://localhost:8080
 ```
+
+or 
+
+```
+http://localhost:8080/display/{id}
+```
+
+To access a specific display using its id.
 
 ### Browser Requirements
 
