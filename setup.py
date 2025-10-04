@@ -45,7 +45,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "webx11=webx11.main:main",
+            "webx11=webx11.server:main",
         ],
     },
     package_data={
