@@ -11,10 +11,6 @@ from webx11.settings import SettingsManager
 IMAGES_SENT = 0
 LAST_FRAME = datetime.now()
 
-# Datagram settings
-MAX_DATAGRAM_SIZE = 1100  # Safe size for most networks, 1170 seems to be the highest value possible in my tests. I seem to get stuck at about 4 FPS with a size of 30 and get about 8 with 500
-CHUNK_HEADER_SIZE = 18  # bytes for metadata (frame_id, chunk_index, total_chunks, etc.)
-
 try:
     from aioquic.asyncio import QuicConnectionProtocol, serve
     from aioquic.h3.connection import H3_ALPN, H3Connection
@@ -161,15 +157,13 @@ class WebTransportHandler:
             await asyncio.sleep(round(1.0 / self.settings.fps, 2))
 
     async def send_window_update(self, force=False):
-        """Send window image via datagrams (chunked)"""
-        # timer = time.time()
+        """Send window image via WebTransport stream"""
         global IMAGES_SENT, LAST_FRAME
         try:
             delta = datetime.now() - LAST_FRAME
             framerate_delta = 1000000 / self.settings.fps  # microseconds
             if delta.seconds == 0 and delta.microseconds < framerate_delta:
                 return
-            # print('Delta is', delta.microseconds / 1000000)
             LAST_FRAME = datetime.now()
         
             window_display = self.window_manager.get_display(self.display_id)
@@ -179,32 +173,31 @@ class WebTransportHandler:
                     IMAGES_SENT += 1
                     self.frame_counter = (self.frame_counter + 1) % 65536
 
-                
-                    # Calculate chunk size (leaving room for header)
-                    chunk_payload_size = MAX_DATAGRAM_SIZE - CHUNK_HEADER_SIZE
-                    total_chunks = (len(window_image) + chunk_payload_size - 1) // chunk_payload_size
-                    print(f"[Send image #{IMAGES_SENT} via datagrams (frame {self.frame_counter}) for window {self.display_id}, size: {len(window_image)} bytes, chunks: {total_chunks}]")
+                    print(f"[Send image #{IMAGES_SENT} via stream (frame {self.frame_counter}) for window {self.display_id}, size: {len(window_image)} bytes]")
 
-                    # Send chunks
-                    for chunk_index in range(total_chunks):
-                        start = chunk_index * chunk_payload_size
-                        end = min(start + chunk_payload_size, len(window_image))
-                        chunk_data = window_image[start:end]
+                    # Create a new unidirectional stream for this frame
+                    stream_id = self.http.create_webtransport_stream(
+                        session_id=self.session_id, is_unidirectional=True
+                    )
                     
-                        # Create header
-                        header = (
-                            self.frame_counter.to_bytes(2, 'big') +
-                            chunk_index.to_bytes(2, 'big') +
-                            total_chunks.to_bytes(2, 'big') +
-                            len(chunk_data).to_bytes(4, 'big') +
-                            int(time.time() * 1000).to_bytes(8, 'big')
-                        )
-
-                        # Send datagram with header + chunk
-                        self.http.send_datagram(self.session_id, header + chunk_data)
-                        self.protocol.transmit()
+                    # Create header with frame metadata
+                    header = (
+                        self.frame_counter.to_bytes(2, 'big') +
+                        len(window_image).to_bytes(4, 'big') +
+                        int(time.time() * 1000).to_bytes(8, 'big')
+                    )
+                    
+                    # Send header + complete frame data on the stream
+                    self.protocol._quic.send_stream_data(
+                        stream_id=stream_id,
+                        data=header + window_image,
+                        end_stream=True
+                    )
+                    
+                    # Transmit the data
+                    self.protocol.transmit()
                 
-                    # Yield to event loop to allow transmission
+                    # Yield to event loop
                     await asyncio.sleep(0)
                 
         except Exception as e:

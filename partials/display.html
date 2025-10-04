@@ -18,20 +18,30 @@
         .status-webtransport {{ background: #4CAF50; color: white; }}
         .status-websocket {{ background: #FF9800; color: white; }}
         .status-disconnected {{ background: #f44336; color: white; }}
-
+        .fps-counter {{
+            position: fixed;
+            top: 30px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.7);
+            color: #0f0;
+            display: none;
+        }}
     </style>
     <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
 </head>
 <body>
     <div id="connectionStatus" class="connection-status status-disconnected">Connecting...</div>
+    <div id="fpsCounter" class="fps-counter">FPS: 0.0</div>
     <div class="window">
         <img unselectable="on" style="user-select:none;" id="windowImage" class="window-image" src="" alt="Window" draggable="false">
     </div>
     
     <script>
         const debounce_timeout = 10;
-        const timeouts = []
-        const runstack = []
 
         function debounce(func, timeout = debounce_timeout){{
             let timer;
@@ -41,49 +51,48 @@
             }};
         }}
 
-        const decompress = base64string => {{
-            const bytes = Uint8Array.from(atob(base64string), c => c.charCodeAt(0));
-            const cs = new DecompressionStream('gzip');
-            const writer = cs.writable.getWriter();
-            writer.write(bytes);
-            writer.close();
-            return new Response(cs.readable).arrayBuffer()
-        }}
-
-        const decompressBytes = bytesArray => {{
-            const cs = new DecompressionStream('gzip');
-            const writer = cs.writable.getWriter();
-            writer.write(bytesArray);
-            writer.close();
-            return new Response(cs.readable).arrayBuffer()
-        }}
-
-        const windowId = {display_id}; // Set your window ID here
+        const windowId = {display_id};
         let transport = null;
         let ws = null;
         let datagramWriter = null;
         let useWebTransport = false;
         
-        // Frame reassembly state
-        let currentFrame = {{
-            id: null,
-            chunks: new Map(),
-            totalChunks: 0,
-            receivedChunks: 0
-        }};
-        
         // Stats
         let stats = {{
             framesReceived: 0,
-            framesDropped: 0,
-            chunksReceived: 0,
             lastFrameTime: Date.now(),
-            timePassed: 0,
-            timePassed: 0,
-            lastFPS: 0,
-            frameSavedFPSCount: 0,
-            lastUpdate: Date.now()
+            fpsHistory: [],
+            showFPS: false
         }};
+        
+        // FPS counter update
+        function updateFPSCounter() {{
+            if (!stats.showFPS) return;
+            
+            const now = Date.now();
+            const oneSecondAgo = now - 1000;
+            
+            // Keep only frames from the last second
+            stats.fpsHistory = stats.fpsHistory.filter(time => time > oneSecondAgo);
+            
+            const fps = stats.fpsHistory.length;
+            const fpsEl = document.getElementById('fpsCounter');
+            fpsEl.textContent = `FPS: ${{fps.toFixed(1)}}`;
+        }}
+        
+        // Toggle FPS counter with F3
+        document.addEventListener('keydown', (e) => {{
+            if (e.key === 'F3') {{
+                e.preventDefault();
+                stats.showFPS = !stats.showFPS;
+                const fpsEl = document.getElementById('fpsCounter');
+                fpsEl.style.display = stats.showFPS ? 'block' : 'none';
+                if (stats.showFPS) {{
+                    stats.fpsHistory = [];
+                }}
+                return;
+            }}
+        }}, true); // Use capture phase to intercept before other handlers
         
         // Try WebTransport first, fallback to WebSocket
         async function connectWebTransport() {{
@@ -115,25 +124,27 @@
                 
                 datagramWriter = transport.datagrams.writable.getWriter();
                 
-                // Handle incoming datagrams
+                // Handle incoming datagrams (control messages only)
                 handleIncomingDatagrams();
+                
+                // Handle incoming streams (frame data)
+                handleIncomingStreams();
                 
                 transport.closed.then(() => {{
                     console.log('WebTransport closed');
                     useWebTransport = false;
                     updateStatus('disconnected');
-                    // setTimeout(connectWebTransport, 2000);
                 }}).catch(err => {{
                     console.error('WebTransport error:', err);
                     useWebTransport = false;
                     updateStatus('disconnected');
-                    // setTimeout(connectWebTransport, 2000);
                 }});
                 
             }} catch (error) {{
                 console.error('WebTransport connection failed:', error);
             }}
         }}
+
         async function serverSync(settings) {{
             console.log('Settings :: ', window.settings)
             resize()
@@ -142,122 +153,126 @@
 
         const resize = debounce(() => {{
             if (window.settings.resize_mode == 'resize-x11') {{
-                    sendMessage({{
-                        type: 'resize',
-                        width: document.documentElement.clientWidth,
-                        height: document.documentElement.clientHeight 
-                    }});
-                }}
-            }}, 100)
+                sendMessage({{
+                    type: 'resize',
+                    width: document.documentElement.clientWidth,
+                    height: document.documentElement.clientHeight 
+                }});
+            }}
+        }}, 100)
 
-    async function handleIncomingDatagrams() {{
-    try {{
-        const reader = transport.datagrams.readable.getReader();
-        console.log('Started listening for datagrams...');
-        
-        while (true) {{
-            const {{ value, done }} = await reader.read();
-            
-            if (done) break;
-            
-            if (value.byteLength > 16 && value[0] !== 123) {{
-                handleImageChunk(value);
-            }} else {{
-                handleControlMessage(value);
+        async function handleIncomingDatagrams() {{
+            try {{
+                const reader = transport.datagrams.readable.getReader();
+                console.log('Started listening for datagrams (control messages)...');
+                
+                while (true) {{
+                    const {{ value, done }} = await reader.read();
+                    
+                    if (done) break;
+                    
+                    handleControlMessage(value);
+                }}
+            }} catch (error) {{
+                console.error('Error reading datagrams:', error);
             }}
         }}
-    }} catch (error) {{
-        console.error('Error reading datagrams:', error);
-    }}
-}}
+
+        async function handleIncomingStreams() {{
+            try {{
+                const reader = transport.incomingUnidirectionalStreams.getReader();
+                console.log('Started listening for streams (frame data)...');
+                
+                while (true) {{
+                    const {{ value: stream, done }} = await reader.read();
+                    
+                    if (done) break;
+                    
+                    // Handle each stream in parallel
+                    handleFrameStream(stream);
+                }}
+            }} catch (error) {{
+                console.error('Error reading streams:', error);
+            }}
+        }}
+
+        async function handleFrameStream(stream) {{
+            try {{
+                const reader = stream.getReader();
+                const chunks = [];
+                let totalLength = 0;
+                
+                // Read all chunks from the stream
+                while (true) {{
+                    const {{ value, done }} = await reader.read();
+                    
+                    if (done) break;
+                    
+                    chunks.push(value);
+                    totalLength += value.length;
+                }}
+                
+                // Combine all chunks
+                const fullData = new Uint8Array(totalLength);
+                let offset = 0;
+                for (const chunk of chunks) {{
+                    fullData.set(chunk, offset);
+                    offset += chunk.length;
+                }}
+                
+                // Parse header (14 bytes)
+                const view = new DataView(fullData.buffer, fullData.byteOffset, fullData.byteLength);
+                const frameId = view.getUint16(0);
+                const dataSize = view.getUint32(2);
+                const timestamp = Number(view.getBigUint64(6));
+                
+                // Extract frame data
+                const frameData = fullData.slice(14, 14 + dataSize);
+                
+                // Display frame
+                displayFrame(frameData, frameId, timestamp);
+                
+            }} catch (error) {{
+                console.error('Error handling frame stream:', error);
+            }}
+        }}
+        
+        function displayFrame(frameData, frameId, timestamp) {{
+            try {{
+                stats.framesReceived++;
+                
+                const now = Date.now();
+                const latency = now - timestamp;
+                const timeSinceLastFrame = now - stats.lastFrameTime;
+                stats.lastFrameTime = now;
+                
+                // Add to FPS history
+                stats.fpsHistory.push(now);
+                updateFPSCounter();
+                
+                console.log(`Frame ${{frameId}}: ${{frameData.length}} bytes, latency: ${{latency}}ms, delta: ${{timeSinceLastFrame}}ms`);
+                
+                // Create blob and display
+                const blob = new Blob([frameData], {{ type: 'image/webp' }});
+                const imgUrl = URL.createObjectURL(blob);
+                
+                const img = document.getElementById('windowImage');
+                if (img.src && img.src.startsWith('blob:')) {{
+                    URL.revokeObjectURL(img.src);
+                }}
+                img.src = imgUrl;
+                
+            }} catch (error) {{
+                console.error('Error displaying frame:', error);
+            }}
+        }}
         
         function handleControlMessage(data) {{
             try {{
                 const message = JSON.parse(new TextDecoder().decode(data));
-                // console.log('Control message:', message, message.frame);
+                console.log('Control message:', message);
             }} catch (e) {{
                 console.error('Error parsing control message:', e);
-            }}
-        }}
-        
-        function handleImageChunk(data) {{
-            stats.chunksReceived++;
-            
-            // Parse header (18 bytes)
-            const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-            const frameId = view.getUint16(0);
-            const chunkIndex = view.getUint16(2);
-            const totalChunks = view.getUint16(4);
-            const dataSize = view.getUint32(6);
-            const timestamp = Number(view.getBigUint64(10));
-
-            
-            // Extract chunk data
-            const chunkData = data.slice(18, 18 + dataSize);
-            
-            // If this is a new frame, reset state
-            if (currentFrame.id !== frameId) {{
-                if (currentFrame.id !== null && currentFrame.receivedChunks < currentFrame.totalChunks) {{
-                    stats.framesDropped++;
-                    console.log(`Frame ${{currentFrame.id}} incomplete: ${{currentFrame.receivedChunks}}/${{currentFrame.totalChunks}} chunks`);
-                }}
-                
-                currentFrame = {{
-                    id: frameId,
-                    chunks: new Map(),
-                    totalChunks: totalChunks,
-                    receivedChunks: 0,
-                    timestamp: timestamp
-                }};
-            }}
-            
-            // Store chunk if not already received
-            if (!currentFrame.chunks.has(chunkIndex)) {{
-                currentFrame.chunks.set(chunkIndex, chunkData);
-                currentFrame.receivedChunks++;
-            }}
-            
-            // If we have all chunks, reassemble and display
-            if (currentFrame.receivedChunks === currentFrame.totalChunks) {{
-                reassembleAndDisplay();
-            }}
-            
-            // updateStats();
-        }}
-        
-        function reassembleAndDisplay() {{
-            try {{
-                // Calculate total size
-                let totalSize = 0;
-                for (const chunk of currentFrame.chunks.values()) {{
-                    totalSize += chunk.length;
-                }}
-                
-                // Reassemble chunks in order
-                const fullData = new Uint8Array(totalSize);
-                let offset = 0;
-                for (let i = 0; i < currentFrame.totalChunks; i++) {{
-                    const chunk = currentFrame.chunks.get(i);
-                    if (!chunk) {{
-                        console.error(`Missing chunk ${{i}} for frame ${{currentFrame.id}}`);
-                        return;
-                    }}
-                    fullData.set(chunk, offset);
-                    offset += chunk.length;
-                }}
-
-                // Decompress image
-                // decompressBytes(fullData).then((decompressed) => {{
-                const blob = new Blob([fullData], {{ type: 'image/webp' }});
-                    const imgUrl = URL.createObjectURL(blob);
-                    if (img.src && img.src.startsWith('blob:')) {{
-                        URL.revokeObjectURL(img.src);
-                    }}
-                    img.src = imgUrl;
-
-                    // }})
-                }} catch (error) {{
-                console.error('Error reassembling frame:', error);
             }}
         }}
         
@@ -292,7 +307,7 @@
             
             ws.onmessage = (event) => {{
                 let timer = Date.now()
-                // It's an image  blob 
+                // It's an image blob 
                 if (event.data instanceof Blob) {{
                     numFrames += 1
 
@@ -302,6 +317,8 @@
                     }}
                     windowImage.src = URL.createObjectURL(event.data)
                     stats.framesReceived++;
+                    stats.fpsHistory.push(Date.now());
+                    updateFPSCounter();
                     console.log(`===== frame ${{numFrames}} =====`)
                     console.log('clientdelta', (Date.now() - lastDelta) / 1000)
                     lastDelta = Date.now()
@@ -330,7 +347,7 @@
             switch(status) {{
                 case 'webtransport':
                     statusEl.classList.add('status-webtransport');
-                    statusEl.textContent = 'WebTransport (Datagrams)';
+                    statusEl.textContent = 'WebTransport (Streams)';
                     break;
                 case 'websocket':
                     statusEl.classList.add('status-websocket');
@@ -340,7 +357,7 @@
                     statusEl.classList.add('status-disconnected');
                     statusEl.textContent = 'Disconnected';
                     break;
-                case 'disconnected':
+                case 'reconnecting':
                     statusEl.classList.add('status-disconnected');
                     statusEl.textContent = 'Reconnecting';
                     break;
@@ -348,7 +365,6 @@
         }}
         
         async function sendMessage(message) {{
-            // console.log('Sengind Message', message)
             if (useWebTransport && datagramWriter) {{
                 try {{
                     const data = new TextEncoder().encode(JSON.stringify(message));
@@ -384,7 +400,6 @@
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
             sendMessage({{type: 'mouseup', x, y, button: 1}});
-            // TODO: I also need to actually use the buttons here, to handle every kind of click correctly
         }});
         
         img.addEventListener('contextmenu', (e) => {{
@@ -397,7 +412,6 @@
 
             sendMessage({{type: 'mousedown', x, y, button: 3}});
         }});
-        
 
         const onMouseMove = debounce((e) => {{
             const rect = e.target.getBoundingClientRect();
@@ -422,6 +436,7 @@
         }});
         
         document.addEventListener('keydown', (e) => {{
+            if (e.key === 'F3') return; // Already handled above
             const key = getKeyFromEvent(e);
             if (key) {{
                 sendMessage({{type: 'keydown', key}});
@@ -430,6 +445,7 @@
         }});
         
         document.addEventListener('keyup', (e) => {{
+            if (e.key === 'F3') return; // Already handled above
             const key = getKeyFromEvent(e);
             if (key) {{
                 sendMessage({{type: 'keyup', key}});
