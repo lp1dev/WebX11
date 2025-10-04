@@ -172,7 +172,7 @@ class WebTransportHandler:
         
             window_display = self.window_manager.get_display(self.display_id)
             if window_display:
-                window_image = window_display.capture_window(compressed=True, force=force)
+                window_image = window_display.capture_window(compressed=False, force=force)
                 if window_image:
                     IMAGES_SENT += 1
                     self.frame_counter = (self.frame_counter + 1) % 65536

@@ -32,6 +32,7 @@ class SingleWindowDisplay:
         self.dpi = 200
         self.maxwidth = width
         self.maxheight = height
+        self.still_frames = 0
         
     def start(self):
         """Start the virtual display for this window"""
@@ -75,7 +76,6 @@ class SingleWindowDisplay:
             return True
             
         except Exception as e:
-            raise(e)
             print(f"Failed to start window display: {e}")
             if self.xvfb_process:
                 self.xvfb_process.terminate()
@@ -100,10 +100,14 @@ class SingleWindowDisplay:
     def capture_window(self, compressed=False, force=False):
         """Capture the window content"""
         if self.screen_capture:
-            screencap_time = time.time()
             capture = self.screen_capture.capture_window(self.x, self.y, self.height, self.width, self.quality, self.dpi, force)
-            print('Screencap took', time.time() - screencap_time)
-            if capture != self.last_frame or force:
+
+            """ This clearly needs some better documenting and explanation """
+            if capture != self.last_frame or force or self.still_frames < 10:
+                if capture != self.last_frame:
+                    self.still_frames = 0
+                else:
+                    self.still_frames += 1
                 self.last_frame = capture
                 self.has_updated = True
                 if compressed:
@@ -113,6 +117,7 @@ class SingleWindowDisplay:
                         print('Compressed/Uncompressed', len(out.getvalue()), len(capture))
                         return out.getvalue()
                 return capture
+            
             self.has_updated = False
         return None
     
@@ -125,8 +130,9 @@ class SingleWindowDisplay:
         print('force_resize:: expected new dimensions', height, width)
 
         print('force_resize:: geometry before', win.get_geometry())
-        # win.configure(x=0, y=0, width=width, height=height, border_width=0)
-        # win.change_attributes(win_gravity=X.NorthWestGravity, bit_gravity=X.StaticGravity)
+        
+        win.configure(x=0, y=0, width=width, height=height, border_width=0)
+        win.change_attributes(win_gravity=X.NorthWestGravity, bit_gravity=X.StaticGravity)
 
         self.x11_display.sync()
         print('Win', win.get_wm_name(), win.get_geometry())

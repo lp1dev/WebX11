@@ -17,6 +17,7 @@ class WebSocketHandler:
         self.lastupdate = None
         
     async def handle_websocket(self, websocket, path="/"):
+        print('GOT WEBSOCKET')
         path = websocket.request.path
         try:
             display_id = int(path.strip('/').split('/')[-1])
@@ -140,19 +141,18 @@ class WebSocketHandler:
     async def send_window_update(self, websocket, display_id, force=False):
         if self.lastupdate is None:
             self.lastupdate = datetime.now()
-        print('Delta is', datetime.now() - self.lastupdate)
         self.lastupdate = datetime.now()
         global IMAGES_SENT
         try:
             window_display = self.window_manager.get_display(display_id)
             if window_display:
-                timer = time.time()
                 window_image = window_display.capture_window(compressed=False, force=force)
-                print('Capture took', time.time() - timer)
+                
                 if window_image:
                     IMAGES_SENT += 1
-                    print("[Send %s images via WebSocket (update) for window %s]" %(IMAGES_SENT, display_id))
+                    print("[Send %s images via WebSocket (update) for window %s]" %(IMAGES_SENT, display_id), len(window_image))
                     await websocket.send(window_image)
+
         except Exception as e:
             print(f"Error sending window update for {display_id}: {e}")
 
@@ -162,7 +162,7 @@ class WebSocketHandler:
                 if self.connected_clients:
                     disconnected = []
                     for client in self.connected_clients:
-                        await self.send_window_update(client.get('websocket'), client.get('display_id'), force=True)
+                        await self.send_window_update(client.get('websocket'), client.get('display_id'), force=False)
                     for client in disconnected:
                         self.connected_clients.remove(client)
                             
@@ -191,4 +191,5 @@ async def run_websocket_server(window_manager, host='127.0.0.1', port=8081):
         host, 
         port
     )
+
     return websocket_server, websocket_handler

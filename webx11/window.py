@@ -20,7 +20,6 @@ class WindowScreenCapture:
             raise Exception("No X11 display available")
         self.screen = self.display.screen()
         self.root = self.screen.root
-        self.last_frame = None
         
     def capture_window(self, x=0, y=0, height=0, width=0, quality=30, dpi=200, force=False):
         """Capture the entire virtual display as PNG"""
@@ -28,62 +27,14 @@ class WindowScreenCapture:
             image, raw = None, None
             geometry = self.root.get_geometry()
 
-            timer = time.time()
             raw = self.root.get_image(0, 0, width, height, X.ZPixmap, 0xffffffff)
-            # print('get_image took', time.time() - timer)
-
-
-            timer = time.time()
             image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
-            # print('image_frombytes took', time.time() - timer)
 
             buffer = io.BytesIO()
             timer = time.time()
             image.save(buffer, format='BMP', dpi=[dpi, dpi], quality=quality, compression_level=0)
-            # print('image.save took', time.time() - timer)
-            # print('========')
             return buffer.getvalue()
 
-
-            if geometry.width != width or geometry.height != height:
-                # print("Warning: discrepancy between actual geometry height and width and provided dimensions.")
-                # print("height, width", height, width, self.root.get_geometry())
-                # TODO: Fix this and update actual dimensions to match
-                raw = self.root.get_image(0, 0, geometry.width, geometry.height, X.ZPixmap, 0xffffffff)
-                image = Image.frombytes("RGB", (geometry.width, geometry.height), raw.data, "raw", "BGRX")
-
-            elif height and width:
-                raw = self.root.get_image(0, 0, width, height, X.ZPixmap, 0xffffffff)
-                image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
-            else:
-
-                get_image_time = time.time()
-                raw = self.root.get_image(0, 0, geometry.width, geometry.height, X.ZPixmap, 0xffffffff)
-                image = Image.frombytes("RGB", (geometry.width, geometry.height), raw.data, "raw", "BGRX")
-                if self.last_frame == image and not force:
-                    return None
-                self.last_frame = image
-
-            buffer = io.BytesIO()
-
-            # To make sure that we don't overcrop
-            if width > geometry.width: 
-                width = geometry.width
-            if height > geometry.height:
-                height = geometry.height
-            
-            if geometry.x > x:
-                x = geometry.x
-            if geometry.y > y:
-                y = geometry.y
-            
-            cropped = image.crop((x, y, width, height))
-            if cropped.size != (0, 0) or (geometry.width == self.display.maxwidth and geometry.height == self.display.maxheight):
-                cropped.save(buffer, format='WEBP', dpi=[dpi, dpi], quality=quality)
-            else:
-                image.save(buffer, format='WEBP', dpi=[dpi, dpi], quality=quality)
-            return buffer.getvalue()
-        
         except Exception as e:
             print(f"Window capture error: {e}")
             return self.create_blank_image()
@@ -95,7 +46,7 @@ class WindowScreenCapture:
         try:
             image = Image.new('RGB', (self.window_display.width, self.window_display.height), color='lightgray')
             buffer = io.BytesIO()
-            image.save(buffer, format="WEBP")
+            image.save(buffer, format="BMP")
             return buffer.getvalue()
         except:
             return None
