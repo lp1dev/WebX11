@@ -37,16 +37,24 @@ class SingleWindowDisplay:
         """Start the virtual display for this window"""
         try:
             # Start Xvfb
+            print('DISPLAY NAME', self.display_name)
+            cmd = [
+                'Xvfb', self.display_name, 
+                '-screen', '0', f'{self.width}x{self.height}x{self.depth}',
+                '-ac',
+                '-nolisten', 'tcp'
+            ]
+            print('cmd is', " ".join(cmd))
             self.xvfb_process = subprocess.Popen([
                 'Xvfb', self.display_name, 
                 '-screen', '0', f'{self.width}x{self.height}x{self.depth}',
                 '-ac',
                 '-nolisten', 'tcp'
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             
             # Wait for Xvfb to start
             for i in range(10):
-                time.sleep(0.5)
+                time.sleep(1)
                 try:
                     test_display = Xlib.display.Display(self.display_name)
                     test_display.close()
@@ -67,6 +75,7 @@ class SingleWindowDisplay:
             return True
             
         except Exception as e:
+            raise(e)
             print(f"Failed to start window display: {e}")
             if self.xvfb_process:
                 self.xvfb_process.terminate()
@@ -91,18 +100,16 @@ class SingleWindowDisplay:
     def capture_window(self, compressed=False, force=False):
         """Capture the window content"""
         if self.screen_capture:
+            screencap_time = time.time()
             capture = self.screen_capture.capture_window(self.x, self.y, self.height, self.width, self.quality, self.dpi, force)
-            # print('Force, capture', force, capture)
+            print('Screencap took', time.time() - screencap_time)
             if capture != self.last_frame or force:
                 self.last_frame = capture
                 self.has_updated = True
                 if compressed:
                     with BytesIO() as out:
-                        with gzip.GzipFile(fileobj=out, mode="w") as f:
+                        with gzip.GzipFile(fileobj=out, mode="w", compresslevel=1) as f:
                             f.write(capture)
-                    # image_b64 = base64.b64encode(out.getvalue()).decode('utf-8')
-                    # image_data = f"data:image/jpg;base64,{image_b64}"
-                    #
                         print('Compressed/Uncompressed', len(out.getvalue()), len(capture))
                         return out.getvalue()
                 return capture

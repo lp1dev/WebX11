@@ -110,15 +110,6 @@ class WebTransportHandler:
             window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_mouse_event(x, y, button, pressed)
-                # self.send_control_message({
-                #     'type': 'input_result',
-                #     'input_type': 'mousedown' if pressed else 'mouseup',
-                #     'success': success,
-                #     'x': x, 'y': y, 'button': button
-                # })
-                # if success:
-                #     await asyncio.sleep(0.1)
-                #     await self.send_window_update()
     
     async def handle_mouse_move(self, data):
         x, y = data.get('x'), data.get('y')

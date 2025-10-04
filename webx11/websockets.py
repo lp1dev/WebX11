@@ -3,6 +3,7 @@ import time
 import asyncio
 import websockets
 import base64
+from datetime import datetime
 from webx11.settings import SettingsManager
 
 IMAGES_SENT = 0
@@ -13,6 +14,7 @@ class WebSocketHandler:
         self.connected_clients = []
         self.window_update_task = None
         self.settings = SettingsManager('settings.json')
+        self.lastupdate = None
         
     async def handle_websocket(self, websocket, path="/"):
         path = websocket.request.path
@@ -136,51 +138,31 @@ class WebSocketHandler:
                 success = window_display.input_handler.send_text_input(text)
     
     async def send_window_update(self, websocket, display_id, force=False):
+        if self.lastupdate is None:
+            self.lastupdate = datetime.now()
+        print('Delta is', datetime.now() - self.lastupdate)
+        self.lastupdate = datetime.now()
         global IMAGES_SENT
         try:
-            print("IN SEND WINDOW UPDATE")
             window_display = self.window_manager.get_display(display_id)
             if window_display:
-                window_image = window_display.capture_window(compressed=True, force=force)
+                timer = time.time()
+                window_image = window_display.capture_window(compressed=False, force=force)
+                print('Capture took', time.time() - timer)
                 if window_image:
                     IMAGES_SENT += 1
                     print("[Send %s images via WebSocket (update) for window %s]" %(IMAGES_SENT, display_id))
-                    image_b64 = base64.b64encode(window_image).decode('utf-8')
-                    message = {
-                        'type': 'window_update',
-                        # 'image': f"data:image/jpg;base64,{image_b64}",
-                        'compressed_image': image_b64,
-                        'timestamp': time.time()
-                    }
-                    await websocket.send(json.dumps(message))
+                    await websocket.send(window_image)
         except Exception as e:
-            raise e
             print(f"Error sending window update for {display_id}: {e}")
-    
+
     async def broadcast_window_updates(self, interval=2.0):
-        global IMAGES_SENT
         while True:
             try:
                 if self.connected_clients:
                     disconnected = []
                     for client in self.connected_clients:
-                        try:
-                            if self.window_manager.get_display(client.get('display_id')) is not None:
-                                window_image = self.window_manager.get_display(client.get('display_id')).capture_window(compressed=True)
-                                if window_image:
-                                    IMAGES_SENT += 1
-                                    print("[Send %s images via WebSocket (broadcast) for window %s]" %(IMAGES_SENT, client.get('display_id')))
-                                    image_b64 = base64.b64encode(window_image).decode('utf-8')
-                                    message = {
-                                        'type': 'window_update',
-                                        # 'image': f"data:image/jpg;base64,{image_b64}",
-                                        'compressed_image': image_b64,
-                                        'timestamp': time.time()
-                                    }
-                                    await client.get('websocket').send(json.dumps(message))
-                        except websockets.exceptions.ConnectionClosed:
-                            disconnected.append(client)
-                    
+                        await self.send_window_update(client.get('websocket'), client.get('display_id'), force=True)
                     for client in disconnected:
                         self.connected_clients.remove(client)
                             

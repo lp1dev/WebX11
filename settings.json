@@ -1,7 +1,7 @@
 {
   "resize_mode": "resize-x11",
   "transport": "webtransport",
-  "image_quality": 80,
+  "image_quality": 50,
   "dpi": 200,
   "max_width": 3440,
   "max_height": 1440,

@@ -39,7 +39,7 @@ def handler_factory(window_manager):
 
 async def main_async(executable_path):
     # Configuration
-    HOST = 'localhost'
+    HOST = '0.0.0.0'
     HTTP_PORT = 8080
     WEBTRANSPORT_PORT = 4433
     WEBSOCKET_PORT = 8081
@@ -73,8 +73,8 @@ async def main_async(executable_path):
     atexit.register(lambda: cleanup(window_manager, websocket_handler))
     
     print(f"✅ X11 Web Display Server with HTTP API started!")
-    print(f"🌐 HTTP interface: http://localhost:{HTTP_PORT}")
-    print(f"🔌 WebSocket server: ws://localhost:{WEBSOCKET_PORT}")
+    print(f"🌐 HTTP interface: http://{HOST}:{HTTP_PORT}")
+    print(f"🔌 WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
     if webtransport_server:
         print(f"🚀 WebTransport server: https://localhost:{WEBTRANSPORT_PORT}")
     print("\nAvailable HTTP Routes:")
@@ -88,7 +88,7 @@ async def main_async(executable_path):
     
     # Create and start HTTP server
     # TODO replace the current HTTP server with something more robust using jinja2 templates
-    http_server = ThreadedHTTPServer(window_manager, ('0.0.0.0', HTTP_PORT), handler_factory(window_manager))
+    http_server = ThreadedHTTPServer(window_manager, (HOST, HTTP_PORT), handler_factory(window_manager))
     
     # Run HTTP server in a separated thread
     import threading

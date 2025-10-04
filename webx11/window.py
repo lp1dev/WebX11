@@ -1,4 +1,5 @@
 import sys
+import time
 import io
 from PIL import Image
 
@@ -26,6 +27,24 @@ class WindowScreenCapture:
         try:
             image, raw = None, None
             geometry = self.root.get_geometry()
+
+            timer = time.time()
+            raw = self.root.get_image(0, 0, width, height, X.ZPixmap, 0xffffffff)
+            # print('get_image took', time.time() - timer)
+
+
+            timer = time.time()
+            image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
+            # print('image_frombytes took', time.time() - timer)
+
+            buffer = io.BytesIO()
+            timer = time.time()
+            image.save(buffer, format='BMP', dpi=[dpi, dpi], quality=quality, compression_level=0)
+            # print('image.save took', time.time() - timer)
+            # print('========')
+            return buffer.getvalue()
+
+
             if geometry.width != width or geometry.height != height:
                 # print("Warning: discrepancy between actual geometry height and width and provided dimensions.")
                 # print("height, width", height, width, self.root.get_geometry())
@@ -37,6 +56,8 @@ class WindowScreenCapture:
                 raw = self.root.get_image(0, 0, width, height, X.ZPixmap, 0xffffffff)
                 image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
             else:
+
+                get_image_time = time.time()
                 raw = self.root.get_image(0, 0, geometry.width, geometry.height, X.ZPixmap, 0xffffffff)
                 image = Image.frombytes("RGB", (geometry.width, geometry.height), raw.data, "raw", "BGRX")
                 if self.last_frame == image and not force:
