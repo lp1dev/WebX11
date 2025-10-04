@@ -83,7 +83,7 @@ Create a `settings.json` file in the project root:
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `resize_mode` | string | `"resize-x11"` enables automatic X display resizing, `"no-resize"` disables it |
+| `resize_mode` | string | `"resize-x11"` enables automatic X display resizing, `"none"` disables it, `"stretch"` stretches the image without actual resizing |
 | `transport` | string | `"webtransport"` (recommended) or `"websocket"` |
 | `image_quality` | number | WebP quality (1-100), affects bandwidth and visual quality |
 | `dpi` | number | Display DPI setting |
@@ -275,6 +275,10 @@ If the server is started with no executable as a parameter, a display needs to b
 5. **Enable resize mode** to adapt to different screen sizes
 
 ## Security Considerations
+
+This project is a small project, the code has not been designed with the utmost security in mind and as of today does not include authentication.
+It should **NOT** be exposed to the internet, especially on sensitive infrastructures! 
+The WebSockets and HTTP APIs use no encryption, keep that in mind.
 
 - **TLS Certificates**: WebTransport uses self-signed certificates by default
 - **can_start_executables**: Set to `false` in production to prevent arbitrary code execution

@@ -37,7 +37,7 @@ def handler_factory(display_manager):
 
 async def main_async():
     # Configuration
-    HOST = '0.0.0.0'
+    HOST = '127.0.0.1'
     HTTP_PORT = 8080
     WEBTRANSPORT_PORT = 4433
     WEBTRANSPORT_HOST = 'localhost' # needs to be a name
