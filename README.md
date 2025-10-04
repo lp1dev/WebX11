@@ -50,22 +50,19 @@ pip install Pillow python-xlib websockets aioquic
 
 ## Installation
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/lp1dev/webx11.git
-cd webx11
+pip install git+https://github.com/lp1dev/WebX11.git # For an installation without webtransport support
 ```
 
-2. Install dependencies:
 ```bash
-pip install -r requirements.txt
+pip install git+https://github.com/lp1dev/WebX11.git[webtransport] # For an installation with webtransport support
 ```
 
-3. Edit the `settings.json` file (see Configuration below)
+Optionally, create a `settings.json` file (see Configuration below)
 
-4. Run the server:
+Run the server:
 ```bash
-python -m webx11
+webx11 (executable)
 ```
 
 ## Configuration

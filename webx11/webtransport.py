@@ -42,7 +42,7 @@ class WebTransportHandler:
         self.display_id = display_id
         self.running = True
         self.frame_counter = 0
-        self.settings = SettingsManager('settings.json')
+        self.settings = SettingsManager()
         
     def h3_event_received(self, event: H3Event):
         """Handle H3 events for this session"""

@@ -63,6 +63,8 @@ async def main_async():
     display_manager = DisplayManager()
     
     websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
+    
+    webtransport_server = None
     if settings.transport == 'webtransport':
         webtransport_server = await webtransport.run_webtransport_server(display_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
 

@@ -10,7 +10,7 @@ html_path = os.path.join(module_dir, "partials", "display.html")
 class APIHandler(BaseHTTPRequestHandler):
     def __init__(self, display_manager, *args, **kwargs):
         self.display_manager = display_manager
-        self.settings = SettingsManager('settings.json')
+        self.settings = SettingsManager()
         super().__init__(*args, **kwargs)
     
     def log_message(self, format, *args):
