@@ -42,6 +42,7 @@ async def main_async(executable_path):
     HOST = '0.0.0.0'
     HTTP_PORT = 8080
     WEBTRANSPORT_PORT = 4433
+    WEBTRANSPORT_HOST = 'localhost' # needs to be a name
     WEBSOCKET_PORT = 8081
     
     print("Starting X11 Web Display Server with HTTP API...")
@@ -62,7 +63,7 @@ async def main_async(executable_path):
     window_manager = DisplayManager()
     
     websocket_server, websocket_handler = await websockets.run_websocket_server(window_manager, HOST, WEBSOCKET_PORT)
-    webtransport_server = await webtransport.run_webtransport_server(window_manager, WEBTRANSPORT_PORT)
+    webtransport_server = await webtransport.run_webtransport_server(window_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
 
     # Start window broadcast
     # websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2)) # TODO Check optimizations for this interval
@@ -76,7 +77,7 @@ async def main_async(executable_path):
     print(f"🌐 HTTP interface: http://{HOST}:{HTTP_PORT}")
     print(f"🔌 WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
     if webtransport_server:
-        print(f"🚀 WebTransport server: https://localhost:{WEBTRANSPORT_PORT}")
+        print(f"🚀 WebTransport server: https://{WEBTRANSPORT_HOST}:{WEBTRANSPORT_PORT}")
     print("\nAvailable HTTP Routes:")
     print("  GET  /              - Main interface")
     print("  GET  /applications  - List available applications")

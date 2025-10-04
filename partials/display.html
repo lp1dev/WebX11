@@ -30,12 +30,18 @@
             color: #0f0;
             display: none;
         }}
+        #hiddenInput {{
+            position: absolute;
+            left: -9999px;
+            opacity: 0;
+        }}
     </style>
     <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
 </head>
 <body>
     <div id="connectionStatus" class="connection-status status-disconnected">Connecting...</div>
     <div id="fpsCounter" class="fps-counter">FPS: 0.0</div>
+    <input type="text" id="hiddenInput" autocomplete="off" />
     <div class="window">
         <img unselectable="on" style="user-select:none;" id="windowImage" class="window-image" src="" alt="Window" draggable="false">
     </div>
@@ -56,6 +62,10 @@
         let ws = null;
         let datagramWriter = null;
         let useWebTransport = false;
+        
+        // Track composition state for dead keys
+        let isComposing = false;
+        let lastInputValue = '';
         
         // Stats
         let stats = {{
@@ -380,6 +390,46 @@
         // Front-end event handling
         addEventListener("resize", resize)
 
+        // Hidden input for capturing text with dead keys
+        const hiddenInput = document.getElementById('hiddenInput');
+        
+        // Keep focus on hidden input to capture all text
+        document.addEventListener('click', () => {{
+            hiddenInput.focus();
+        }});
+        
+        hiddenInput.focus();
+        
+        // Handle text input from hidden field
+        hiddenInput.addEventListener('input', (e) => {{
+            const newValue = hiddenInput.value;
+            const addedText = newValue.substring(lastInputValue.length);
+            
+            if (addedText) {{
+                console.log('Text input captured:', addedText);
+                sendMessage({{type: 'text_input', text: addedText}});
+            }}
+            
+            lastInputValue = newValue;
+            
+            // Clear input periodically to prevent it from getting too long
+            if (newValue.length > 100) {{
+                hiddenInput.value = '';
+                lastInputValue = '';
+            }}
+        }});
+
+        // Composition events
+        hiddenInput.addEventListener('compositionstart', (e) => {{
+            isComposing = true;
+            console.log('Composition started');
+        }});
+
+        hiddenInput.addEventListener('compositionend', (e) => {{
+            isComposing = false;
+            console.log('Composition ended:', e.data);
+        }});
+
         // Mouse and keyboard event handling
         const img = document.getElementById('windowImage');
         
@@ -435,23 +485,36 @@
             e.preventDefault();
         }});
         
+        // Only send special keys via key events, regular text via input event
         document.addEventListener('keydown', (e) => {{
             if (e.key === 'F3') return; // Already handled above
+            
             const key = getKeyFromEvent(e);
-            if (key) {{
+            
+            // Only send special keys (not regular text)
+            if (key && !isRegularTextKey(e)) {{
                 sendMessage({{type: 'keydown', key}});
                 e.preventDefault();
             }}
         }});
         
         document.addEventListener('keyup', (e) => {{
-            if (e.key === 'F3') return; // Already handled above
+            if (e.key === 'F3') return;
+            
             const key = getKeyFromEvent(e);
-            if (key) {{
+            
+            // Only send special keys (not regular text)
+            if (key && !isRegularTextKey(e)) {{
                 sendMessage({{type: 'keyup', key}});
                 e.preventDefault();
             }}
         }});
+        
+        function isRegularTextKey(e) {{
+            // Regular text keys should be handled by the input event
+            // Special keys should be sent as key events
+            return e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
+        }}
         
         function getKeyFromEvent(e) {{
             const specialKeys = {{

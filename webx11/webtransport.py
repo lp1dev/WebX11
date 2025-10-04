@@ -284,7 +284,7 @@ class WebTransportProtocol(QuicConnectionProtocol):
         print('Connection is closing')
         await super._closed.wait()
 
-async def run_webtransport_server(window_manager, port):
+async def run_webtransport_server(window_manager, host, port):
     webtransport_server = None
     if WEBTRANSPORT_AVAILABLE:
         try:
@@ -299,7 +299,7 @@ async def run_webtransport_server(window_manager, port):
                 subprocess.run([
                     "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                     "-out", "certs/cert.pem", "-keyout", "key.pem", "-days", "365",
-                    "-subj", "/CN=localhost", "-addext", "subjectAltName = DNS:localhost"
+                    "-subj", f"/CN={host}", "-addext", "subjectAltName = DNS:localhost" # Watch out, here the CN must be localhost if you're running in local! I changed it to {host}
                 ], check=True, capture_output=True)
                 
                 subprocess.run([
@@ -320,13 +320,13 @@ async def run_webtransport_server(window_manager, port):
                 )
             
             webtransport_server = await serve(
-                "localhost",
+                host,
                 "%s" % port,
                 configuration=configuration,
                 create_protocol=create_protocol,
                 retry=True,                    
             )
-            print(f"✅ WebTransport server started on port {port}")
+            print(f"✅ WebTransport server started on {host} {port}")
             
             fingerprint = "None"
             with open("certs/pubkey.der", "rb") as f:
