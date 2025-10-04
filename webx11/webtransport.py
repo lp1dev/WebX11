@@ -298,7 +298,7 @@ async def run_webtransport_server(window_manager, host, port):
                 print("Generating self-signed certificate for WebTransport...")
                 subprocess.run([
                     "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                    "-out", "certs/cert.pem", "-keyout", "key.pem", "-days", "365",
+                    "-out", "certs/cert.pem", "-keyout", "certs/key.pem", "-days", "365",
                     "-subj", f"/CN={host}", "-addext", "subjectAltName = DNS:localhost" # Watch out, here the CN must be localhost if you're running in local! I changed it to {host}
                 ], check=True, capture_output=True)
                 

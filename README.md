@@ -35,27 +35,14 @@ You're a sysadmin and need to open a GUI application on a remote server?
 - `Xvfb` - Virtual framebuffer X server
 - `openssl` - For generating TLS certificates (WebTransport)
 
-**Python Dependencies:**
-```
-Pillow
-python-xlib
-websockets
-aioquic  # Optional, for WebTransport support
-```
-
-Install with:
-```bash
-pip install Pillow python-xlib websockets aioquic
-```
-
 ## Installation
 
 ```bash
-pip install git+https://github.com/lp1dev/WebX11.git # For an installation without webtransport support
+pip install git+https://github.com/lp1dev/WebX11.git
 ```
 
 ```bash
-pip install git+https://github.com/lp1dev/WebX11.git[webtransport] # For an installation with webtransport support
+pip install aioquic # Optional, for an installation with webtransport support required
 ```
 
 Optionally, create a `settings.json` file (see Configuration below)
@@ -81,6 +68,9 @@ Create a `settings.json` file in the project root:
   "can_start_executables": false
 }
 ```
+
+> **Note**: Keep *max_width* and *max_height* values superior to the maximum size your windows will be resized to.
+High values do not actually have a significative impact on performance with the *resize-x11* parameter.
 
 ### Configuration Options
 
