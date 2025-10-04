@@ -72,6 +72,7 @@ class WebTransportHandler:
             print(f"Error handling stream data: {e}")
     
     async def handle_client_message(self, data):
+        print('got message', data)
         """Handle incoming control messages"""
         msg_type = data.get('type')
         window_display = self.window_manager.get_display(self.display_id)
@@ -137,7 +138,6 @@ class WebTransportHandler:
             window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
                 success = window_display.input_handler.send_key_event_by_name(key, pressed)
-                print(key, pressed)
     
     async def handle_text_input(self, data):
         text = data.get('text', '')
@@ -162,12 +162,14 @@ class WebTransportHandler:
 
     async def send_window_update(self, force=False):
         """Send window image via datagrams (chunked)"""
+        # timer = time.time()
         global IMAGES_SENT, LAST_FRAME
         try:
             delta = datetime.now() - LAST_FRAME
             framerate_delta = 1000000 / self.settings.fps  # microseconds
             if delta.seconds == 0 and delta.microseconds < framerate_delta:
                 return
+            # print('Delta is', delta.microseconds / 1000000)
             LAST_FRAME = datetime.now()
         
             window_display = self.window_manager.get_display(self.display_id)
@@ -177,11 +179,11 @@ class WebTransportHandler:
                     IMAGES_SENT += 1
                     self.frame_counter = (self.frame_counter + 1) % 65536
 
-                    print(f"[Send image #{IMAGES_SENT} via datagrams (frame {self.frame_counter}) for window {self.display_id}, size: {len(window_image)} bytes]")
                 
                     # Calculate chunk size (leaving room for header)
                     chunk_payload_size = MAX_DATAGRAM_SIZE - CHUNK_HEADER_SIZE
                     total_chunks = (len(window_image) + chunk_payload_size - 1) // chunk_payload_size
+                    print(f"[Send image #{IMAGES_SENT} via datagrams (frame {self.frame_counter}) for window {self.display_id}, size: {len(window_image)} bytes, chunks: {total_chunks}]")
 
                     # Send chunks
                     for chunk_index in range(total_chunks):
@@ -201,7 +203,6 @@ class WebTransportHandler:
                         # Send datagram with header + chunk
                         self.http.send_datagram(self.session_id, header + chunk_data)
                         self.protocol.transmit()
-                
                 
                     # Yield to event loop to allow transmission
                     await asyncio.sleep(0)

@@ -190,6 +190,7 @@
             const totalChunks = view.getUint16(4);
             const dataSize = view.getUint32(6);
             const timestamp = Number(view.getBigUint64(10));
+
             
             // Extract chunk data
             const chunkData = data.slice(18, 18 + dataSize);
@@ -246,13 +247,16 @@
                 }}
 
                 // Decompress image
-                const blob = new Blob([decompressed], {{ type: 'image/bmp' }});
-                const imgUrl = URL.createObjectURL(blob);
-                if (img.src && img.src.startsWith('blob:')) {{
-                    URL.revokeObjectURL(img.src);
-                }}
-                img.src = imgUrl;
-            }} catch (error) {{
+                // decompressBytes(fullData).then((decompressed) => {{
+                const blob = new Blob([fullData], {{ type: 'image/webp' }});
+                    const imgUrl = URL.createObjectURL(blob);
+                    if (img.src && img.src.startsWith('blob:')) {{
+                        URL.revokeObjectURL(img.src);
+                    }}
+                    img.src = imgUrl;
+
+                    // }})
+                }} catch (error) {{
                 console.error('Error reassembling frame:', error);
             }}
         }}

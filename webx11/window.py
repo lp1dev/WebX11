@@ -22,7 +22,7 @@ class WindowScreenCapture:
         self.root = self.screen.root
         
     def capture_window(self, x=0, y=0, height=0, width=0, quality=30, dpi=200, force=False):
-        """Capture the entire virtual display as PNG"""
+        """Capture the entire virtual display as WEBP"""
         try:
             image, raw = None, None
             geometry = self.root.get_geometry()
@@ -31,8 +31,7 @@ class WindowScreenCapture:
             image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
 
             buffer = io.BytesIO()
-            timer = time.time()
-            image.save(buffer, format='BMP', dpi=[dpi, dpi], quality=quality, compression_level=0)
+            image.save(buffer, format='WEBP', dpi=[dpi, dpi], quality=quality, compression_level=9)
             return buffer.getvalue()
 
         except Exception as e:
@@ -46,7 +45,7 @@ class WindowScreenCapture:
         try:
             image = Image.new('RGB', (self.window_display.width, self.window_display.height), color='lightgray')
             buffer = io.BytesIO()
-            image.save(buffer, format="BMP")
+            image.save(buffer, format="WEBP")
             return buffer.getvalue()
         except:
             return None

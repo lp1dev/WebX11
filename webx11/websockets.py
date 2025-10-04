@@ -17,7 +17,6 @@ class WebSocketHandler:
         self.lastupdate = None
         
     async def handle_websocket(self, websocket, path="/"):
-        print('GOT WEBSOCKET')
         path = websocket.request.path
         try:
             display_id = int(path.strip('/').split('/')[-1])
