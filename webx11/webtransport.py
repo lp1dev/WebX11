@@ -265,7 +265,7 @@ class WebTransportProtocol(QuicConnectionProtocol):
             stream_id, self._http, self.window_manager, display_id, self
         )
         self._send_response(stream_id, 200)
-        
+        self._handler.send_window_update(force=True)
         self._update_task = asyncio.create_task(self._handler.send_updates_loop())
         print(f"WebTransport session established for window {display_id}")
     

@@ -43,9 +43,7 @@ python -m webx11.server (your_executable)
 - 🚀 **Low latency streaming** via WebTransport (HTTP/3) or WebSocket fallback
 - 📐 **Automatic window resizing** based on browser viewport
 - 🎯 **Direct X11 integration** - no VNC or intermediary protocols
-- 🔌 **Simple HTTP API** for creating and managing displays
-- ⚡ **Minimal dependencies** - just Xvfb and OpenSSL
-- 🎮 **Full input support** - mouse, keyboard, scroll, dead keys
+- 🔌 **Simple HTTP API** for viewing creating and managing displays
 - 📊 **Built-in FPS counter** (press F3 to toggle)
 
 > **Note** : Regarding the latency. Realistically, you're not going to do some heavy gaming on this. But I'm currently streaming my terminal on my 2k screen and the 12 FPS I have are more than enough for this usage, especially with the low input latency!
