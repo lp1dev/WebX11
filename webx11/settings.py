@@ -39,6 +39,7 @@ class SettingsManager:
         self.host = self.settings.get('host')
         self.webtransport_host = self.settings.get('webtransport_host')
         self.cors_unsafe_allow_all = self.settings.get('cors_unsafe_allow_all')
+        self.image_format = self.settings.get('image_format')
         
         if isinstance(self.settings.get('can_start_executables'), bool):
             self.can_start_executables = self.settings.get('can_start_executables')
@@ -49,5 +50,8 @@ class SettingsManager:
     def dump_json(self):
         return json.dumps({ "settings" : {
             "resize_mode": self.resize_mode,
-            "transport": self.transport
+            "transport": self.transport,
+            "image_format": self.image_format,
+            "max_height": self.max_height,
+            "max_width": self.max_width
         }})

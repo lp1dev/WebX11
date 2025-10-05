@@ -9,5 +9,6 @@
   "can_start_executables": false,
   "webtransport_host": "localhost",
   "host": "127.0.0.1",
-  "cors_unsafe_allow_all": false
+  "cors_unsafe_allow_all": false,
+  "image_format": "WEBP"
 }

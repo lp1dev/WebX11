@@ -292,7 +292,7 @@
                 console.log(`Frame ${{frameId}}: ${{frameData.length}} bytes, latency: ${{latency}}ms, delta: ${{timeSinceLastFrame}}ms`);
                 
                 // Create blob and display
-                const blob = new Blob([frameData], {{ type: 'image/webp' }});
+                const blob = new Blob([frameData], {{ type: 'image/' + window.settings.image_format }});
                 const imgUrl = URL.createObjectURL(blob);
                 
                 const img = document.getElementById('windowImage');
