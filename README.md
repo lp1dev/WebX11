@@ -36,7 +36,7 @@ Optionally, create a `settings.json` file (see Configuration below)
 
 Run the server:
 ```bash
-python3 -m webx11.server (your_executable)
+python -m webx11.server (your_executable)
 ```
 
 **Key Features:**
@@ -97,7 +97,7 @@ High values do not actually have a significative impact on performance with the 
 ### Starting the Server
 
 ```bash
-python -m webx11.main
+python -m webx11.server
 ```
 
 The server will start on:
