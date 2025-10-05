@@ -1,7 +1,7 @@
 import sys
 import io
 from PIL import Image
-from settings import SettingsManager
+from webx11.settings import SettingsManager
 
 try:
     from Xlib import X, XK
