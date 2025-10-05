@@ -36,7 +36,7 @@ Optionally, create a `settings.json` file (see Configuration below)
 
 Run the server:
 ```bash
-webx11 (executable)
+python3 -m webx11.server (your_executable)
 ```
 
 **Key Features:**
