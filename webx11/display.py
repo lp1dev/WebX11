@@ -31,6 +31,7 @@ class SingleWindowDisplay:
         self.maxwidth = width
         self.maxheight = height
         self.still_frames = 0
+        self.executable = None
         
     def start(self):
         """Start the virtual display for this window"""
@@ -176,6 +177,7 @@ class SingleWindowDisplay:
             'display': self.display_name,
             'width': self.width,
             'height': self.height,
+            'executable': self.executable,
             'name': f"Window {self.display_id}"
         }
 

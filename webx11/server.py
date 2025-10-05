@@ -36,10 +36,8 @@ def handler_factory(display_manager):
 
 async def main_async():
     # Configuration
-    HOST = '127.0.0.1'
     HTTP_PORT = 8080
     WEBTRANSPORT_PORT = 4433
-    WEBTRANSPORT_HOST = 'localhost' # needs to be a name
     WEBSOCKET_PORT = 8081
     
     print("Starting X11 Web Display Server with HTTP API...")
@@ -47,9 +45,11 @@ async def main_async():
     
     # Parsing settings
     settings = SettingsManager()
+
+    HOST = settings.host
+    WEBTRANSPORT_HOST = settings.webtransport_host
     if settings.transport == 'webtransport':
         from webx11 import webtransport
-
 
     # Check if Xvfb is available
     try:

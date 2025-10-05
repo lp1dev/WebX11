@@ -36,6 +36,10 @@ class SettingsManager:
         if isinstance(self.settings.get('max_fps'), int):
             self.fps = self.settings.get('max_fps')
             self.max_fps = self.settings.get('max_fps')
+        self.host = self.settings.get('host')
+        self.webtransport_host = self.settings.get('webtransport_host')
+        self.cors_unsafe_allow_all = self.settings.get('cors_unsafe_allow_all')
+        
         if isinstance(self.settings.get('can_start_executables'), bool):
             self.can_start_executables = self.settings.get('can_start_executables')
         else:

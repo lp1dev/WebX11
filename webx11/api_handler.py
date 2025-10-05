@@ -19,11 +19,12 @@ class APIHandler(BaseHTTPRequestHandler):
     def send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS,DELETE")
     
     def do_OPTIONS(self):
         self.send_response(200)
-        self.send_cors_headers()
+        if self.settings.cors_unsafe_allow_all:
+            self.send_cors_headers()
         self.end_headers()
     
     def do_GET(self):
@@ -65,6 +66,8 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_response(302)
         id = len(self.display_manager.get_all_displays())
         if id > 0:
+            if self.settings.cors_unsafe_allow_all:
+                self.send_cors_headers()
             self.send_header('Location', '/display/%s' %id)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
@@ -73,7 +76,8 @@ class APIHandler(BaseHTTPRequestHandler):
 
     def serve_settings(self):
         self.send_response(200)
-        self.send_cors_headers()
+        if self.settings.cors_unsafe_allow_all:
+            self.send_cors_headers()
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         self.wfile.write(self.settings.dump_json().encode('utf-8'))
@@ -104,7 +108,10 @@ class APIHandler(BaseHTTPRequestHandler):
                 return
             
             process = self.display_manager.start_executable(display_id, data.get('executable'))
+            display.executable = data.get('executable')
             self.send_response(200)
+            if self.settings.cors_unsafe_allow_all:
+                self.send_cors_headers()
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"message": "OK", "display": display.display_id, "process": process.pid}).encode('utf-8'))
@@ -117,7 +124,8 @@ class APIHandler(BaseHTTPRequestHandler):
 
     def serve_display_list(self):
         self.send_response(200)
-        self.send_cors_headers()
+        if self.settings.cors_unsafe_allow_all:
+            self.send_cors_headers()
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         
@@ -141,6 +149,8 @@ class APIHandler(BaseHTTPRequestHandler):
             return
         
         self.send_response(200)
+        if self.settings.cors_unsafe_allow_all:
+            self.send_cors_headers()
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         
@@ -159,6 +169,8 @@ class APIHandler(BaseHTTPRequestHandler):
             return
         self.display_manager.remove_display(display_id)
         self.send_response(200)
+        if self.settings.cors_unsafe_allow_all:
+            self.send_cors_headers()
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps({"success": True}).encode('utf-8'))
@@ -183,6 +195,8 @@ class APIHandler(BaseHTTPRequestHandler):
             display = self.display_manager.create_display(data.get('width'), data.get('height'))
             
             self.send_response(200)
+            if self.settings.cors_unsafe_allow_all:
+                self.send_cors_headers()
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"message": "OK", "display": display.display_id}).encode('utf-8'))
@@ -200,6 +214,8 @@ class APIHandler(BaseHTTPRequestHandler):
             return
         self.display_manager.resize_display(int(display_id), int(width), int(height))
         self.send_response(200)
+        if self.settings.cors_unsafe_allow_all:
+            self.send_cors_headers()
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps({"success": True}).encode('utf-8'))

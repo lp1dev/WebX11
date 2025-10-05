@@ -36,12 +36,27 @@
             left: -9999px;
             opacity: 0;
         }}
+        .edge-scroll-indicator {{
+            position: fixed;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }}
+        .edge-scroll-indicator.active {{
+            opacity: 1;
+        }}
     </style>
     <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
 </head>
 <body>
     <div id="connectionStatus" class="connection-status status-disconnected">Connecting...</div>
     <div id="fpsCounter" class="fps-counter">FPS: 0.0</div>
+    <div id="edgeScrollIndicator" class="edge-scroll-indicator"></div>
     <input type="text" id="hiddenInput" autocomplete="off" />
     <div class="window">
         <img unselectable="on" style="user-select:none;" id="windowImage" class="window-image" src="" alt="Window" draggable="false">
@@ -67,6 +82,17 @@
         // Track composition state for dead keys
         let isComposing = false;
         let lastInputValue = '';
+        
+        // Touch gesture tracking
+        let touchState = {{
+            lastTapTime: 0,
+            tapCount: 0,
+            edgeScrollActive: false,
+            edgeScrollStartY: 0,
+            twoFingerScrollActive: false,
+            lastTwoFingerY: 0,
+            touches: new Map()
+        }};
         
         // Stats
         let stats = {{
@@ -396,12 +422,17 @@
         // Hidden input for capturing text with dead keys
         const hiddenInput = document.getElementById('hiddenInput');
         
-        // Keep focus on hidden input to capture all text
-        document.addEventListener('click', () => {{
-            hiddenInput.focus();
-        }});
+        // Detect if device is mobile/tablet
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                         ('ontouchstart' in window);
         
-        hiddenInput.focus();
+        // Keep focus on hidden input to capture all text (desktop only or after double-tap on mobile)
+        if (!isMobile) {{
+            document.addEventListener('click', () => {{
+                hiddenInput.focus();
+            }});
+            hiddenInput.focus();
+        }}
         
         // Handle text input from hidden field
         hiddenInput.addEventListener('input', (e) => {{
@@ -487,6 +518,163 @@
             sendMessage({{type: 'scroll', x, y, deltaY: e.deltaY}});
             e.preventDefault();
         }});
+        
+        // Touch event handlers for gestures
+        img.addEventListener('touchstart', handleTouchStart, {{ passive: false }});
+        img.addEventListener('touchmove', handleTouchMove, {{ passive: false }});
+        img.addEventListener('touchend', handleTouchEnd, {{ passive: false }});
+        img.addEventListener('touchcancel', handleTouchEnd, {{ passive: false }});
+        
+        function handleTouchStart(e) {{
+            const touches = e.touches;
+            const rect = e.target.getBoundingClientRect();
+            const edgeThreshold = 30; // pixels from right edge
+            
+            // Update touch tracking
+            for (let touch of touches) {{
+                touchState.touches.set(touch.identifier, {{
+                    x: touch.clientX,
+                    y: touch.clientY,
+                    startX: touch.clientX,
+                    startY: touch.clientY
+                }});
+            }}
+            
+            // Check for double-tap (mobile keyboard activation)
+            if (isMobile && touches.length === 1) {{
+                const now = Date.now();
+                const timeSinceLastTap = now - touchState.lastTapTime;
+                
+                if (timeSinceLastTap < 300) {{
+                    // Double tap detected
+                    touchState.tapCount = 2;
+                    hiddenInput.focus();
+                    console.log('Double-tap: keyboard activated');
+                    e.preventDefault();
+                    return;
+                }} else {{
+                    touchState.tapCount = 1;
+                }}
+                touchState.lastTapTime = now;
+            }}
+            
+            // Check for edge scroll (single finger on right edge)
+            if (touches.length === 1) {{
+                const touch = touches[0];
+                const distanceFromRightEdge = rect.right - touch.clientX;
+                
+                if (distanceFromRightEdge <= edgeThreshold) {{
+                    touchState.edgeScrollActive = true;
+                    touchState.edgeScrollStartY = touch.clientY;
+                    document.getElementById('edgeScrollIndicator').classList.add('active');
+                    e.preventDefault();
+                    return;
+                }}
+            }}
+            
+            // Check for two-finger scroll
+            if (touches.length === 2) {{
+                touchState.twoFingerScrollActive = true;
+                touchState.lastTwoFingerY = (touches[0].clientY + touches[1].clientY) / 2;
+                e.preventDefault();
+                return;
+            }}
+            
+            // Regular mouse down for single touch (not on edge)
+            if (touches.length === 1 && !touchState.edgeScrollActive) {{
+                const touch = touches[0];
+                const scaleX = e.target.naturalWidth / rect.width;
+                const scaleY = e.target.naturalHeight / rect.height;
+                const x = Math.round((touch.clientX - rect.left) * scaleX);
+                const y = Math.round((touch.clientY - rect.top) * scaleY);
+                
+                sendMessage({{type: 'mousedown', x, y, button: 1}});
+            }}
+        }}
+        
+        function handleTouchMove(e) {{
+            const touches = e.touches;
+            const rect = e.target.getBoundingClientRect();
+            
+            // Handle edge scroll
+            if (touchState.edgeScrollActive && touches.length === 1) {{
+                const touch = touches[0];
+                const deltaY = touch.clientY - touchState.edgeScrollStartY;
+                const scaleX = e.target.naturalWidth / rect.width;
+                const scaleY = e.target.naturalHeight / rect.height;
+                const x = Math.round((touch.clientX - rect.left) * scaleX);
+                const y = Math.round((touch.clientY - rect.top) * scaleY);
+                
+                // Send scroll message (converting touch delta to wheel delta)
+                sendMessage({{type: 'scroll', x, y, deltaY: -deltaY * 2}});
+                touchState.edgeScrollStartY = touch.clientY;
+                e.preventDefault();
+                return;
+            }}
+            
+            // Handle two-finger scroll
+            if (touchState.twoFingerScrollActive && touches.length === 2) {{
+                const currentY = (touches[0].clientY + touches[1].clientY) / 2;
+                const deltaY = currentY - touchState.lastTwoFingerY;
+                
+                const scaleX = e.target.naturalWidth / rect.width;
+                const scaleY = e.target.naturalHeight / rect.height;
+                const centerX = (touches[0].clientX + touches[1].clientX) / 2;
+                const centerY = (touches[0].clientY + touches[1].clientY) / 2;
+                const x = Math.round((centerX - rect.left) * scaleX);
+                const y = Math.round((centerY - rect.top) * scaleY);
+                
+                // Send scroll message (converting touch delta to wheel delta)
+                sendMessage({{type: 'scroll', x, y, deltaY: -deltaY * 2}});
+                touchState.lastTwoFingerY = currentY;
+                e.preventDefault();
+                return;
+            }}
+            
+            // Regular mouse move for single touch
+            if (touches.length === 1 && !touchState.edgeScrollActive && !touchState.twoFingerScrollActive) {{
+                const touch = touches[0];
+                const scaleX = e.target.naturalWidth / rect.width;
+                const scaleY = e.target.naturalHeight / rect.height;
+                const x = Math.round((touch.clientX - rect.left) * scaleX);
+                const y = Math.round((touch.clientY - rect.top) * scaleY);
+                
+                sendMessage({{type: 'mousemove', x, y, button: 1}});
+            }}
+        }}
+        
+        function handleTouchEnd(e) {{
+            const touches = e.touches;
+            const rect = e.target.getBoundingClientRect();
+            
+            // Clean up edge scroll
+            if (touchState.edgeScrollActive) {{
+                touchState.edgeScrollActive = false;
+                document.getElementById('edgeScrollIndicator').classList.remove('active');
+            }}
+            
+            // Clean up two-finger scroll
+            if (touchState.twoFingerScrollActive && touches.length < 2) {{
+                touchState.twoFingerScrollActive = false;
+            }}
+            
+            // Update touch tracking
+            const changedTouches = e.changedTouches;
+            for (let touch of changedTouches) {{
+                touchState.touches.delete(touch.identifier);
+            }}
+            
+            // Send mouse up if all touches are gone
+            if (touches.length === 0 && changedTouches.length > 0) {{
+                const touch = changedTouches[0];
+                const scaleX = e.target.naturalWidth / rect.width;
+                const scaleY = e.target.naturalHeight / rect.height;
+                const x = Math.round((touch.clientX - rect.left) * scaleX);
+                const y = Math.round((touch.clientY - rect.top) * scaleY);
+                
+                sendMessage({{type: 'mouseup', x, y, button: 1}});
+            }}
+        }}
         
         // Only send special keys via key events, regular text via input event
         document.addEventListener('keydown', (e) => {{
