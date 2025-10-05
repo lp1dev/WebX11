@@ -4,6 +4,8 @@ from PIL import Image
 from webx11.settings import SettingsManager
 
 try:
+    import Xlib
+    import Xlib.display
     from Xlib import X, XK
     from Xlib.ext import xtest
 except ImportError:
