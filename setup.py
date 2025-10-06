@@ -33,9 +33,9 @@ setup(
         "Pillow>=9.0.0",
         "python-xlib>=0.31",
         "websockets>=10.0",
+        "aioquic>=0.9.0"
     ],
     extras_require={
-        "webtransport": ["aioquic>=0.9.0"],
         "dev": [
             "pytest>=7.0.0",
             "pytest-asyncio>=0.18.0",
