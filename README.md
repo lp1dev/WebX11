@@ -82,7 +82,7 @@ High values do not actually have a significative impact on performance with the 
 | Option | Type | Description |
 |--------|------|-------------|
 | `resize_mode` | string | `"resize-x11"` enables automatic X display resizing, `"none"` disables it, `"stretch"` stretches the image without actual resizing |
-| `transport` | string | `"webtransport"` (recommended) or `"websocket"` |
+| `transport` | string | `"webtransport"` (if your browser supports it) or `"websocket"` |
 | `image_quality` | number | WebP quality (1-100), affects bandwidth and visual quality |
 | `dpi` | number | Display DPI setting |
 | `max_width` | number | Maximum display width in pixels |
