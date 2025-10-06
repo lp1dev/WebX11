@@ -52,7 +52,7 @@ python -m webx11.server (your_executable)
 ## How It Works
 
 1. WebX11 spawns virtual X displays using Xvfb
-2. Captures window content and encodes it as WebP
+2. Captures window content and encodes it as an image
 3. Streams frames via WebTransport streams (or WebSocket)
 4. Sends input events (mouse/keyboard) back to X11
 5. Automatically resizes the X display to match browser window
