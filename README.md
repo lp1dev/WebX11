@@ -89,6 +89,10 @@ High values do not actually have a significative impact on performance with the 
 | `max_height` | number | Maximum display height in pixels |
 | `max_fps` | number | Maximum frames per second (1-60) |
 | `can_start_executables` | boolean | Allow starting executables via API (security consideration) |
+| `webtransport_host` | string | Webtransport hostname (for SSL/TLS exchanges) |
+| `host` | string | Localhost by default |
+|  `cors_unsafe_allow_all` | string | Allow unsafe origins (*) in CORS. Do not enable this one if you don't know what it is |
+|  `image_format` | string | WEBP by default, but feel free to test with aything else that is supported by Pillow | 
 
 ## Usage
 
