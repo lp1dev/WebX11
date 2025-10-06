@@ -20,6 +20,7 @@ class WindowScreenCapture:
             raise Exception("No X11 display available")
         self.screen = self.display.screen()
         self.root = self.screen.root
+        self.settings = SettingsManager()
         
     def capture_window(self, x=0, y=0, height=0, width=0, quality=30, dpi=200, force=False):
         try:
