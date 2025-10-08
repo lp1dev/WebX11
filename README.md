@@ -300,12 +300,14 @@ The WebSockets and HTTP APIs use no encryption, keep that in mind.
 
 ### WebTransport not connecting
 - Ensure Chrome is started with the correct flags
+- Make sure that your server is actually listening on an interface/IP you can access
 - Check that port 4433 is not blocked
 - Verify the certificate fingerprint matches the generated certificates
 
 ### Black screen or no frames
+- Make sure that the max_width and max_height values are absolutely larger than the maximum size your browser window can have
 - Check that Xvfb is installed and working
-- Verify that your executable is correctly running on the display
+- Verify that your executable is correctly installed, available and running on the display
 - Check console logs for errors
 - Try reducing image quality
 
