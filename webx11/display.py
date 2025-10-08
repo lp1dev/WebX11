@@ -6,6 +6,7 @@ import os
 
 from Xlib import X
 from webx11.window import WindowScreenCapture, WindowInputHandler
+from webx11.settings import SettingsManager
 from io import BytesIO
 import gzip
 
@@ -26,8 +27,7 @@ class SingleWindowDisplay:
         self.is_running = False
         self.has_updated = False
         self.last_frame = None
-        self.quality = 30
-        self.dpi = 200
+        self.settings = SettingsManager()
         self.maxwidth = width
         self.maxheight = height
         self.still_frames = 0
@@ -99,7 +99,7 @@ class SingleWindowDisplay:
     def capture_window(self, compressed=False, force=False):
         """Capture the window content"""
         if self.screen_capture:
-            capture = self.screen_capture.capture_window(self.x, self.y, self.height, self.width, self.quality, self.dpi, force)
+            capture = self.screen_capture.capture_window(self.x, self.y, self.height, self.width, self.settings.quality, self.settings.dpi, force)
 
             """ This clearly needs some better documenting and explanation """
             if capture != self.last_frame or force or self.still_frames < 10:
