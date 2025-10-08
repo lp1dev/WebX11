@@ -57,8 +57,8 @@ class WindowScreenCapture:
                 # JPEG is much faster
                 self.pil_image.save(
                     self.frame_buffer,
-                    format='JPEG',
-                    quality=quality,
+                    format=self.settings.image_format, # Should work best with JPEG
+                    quality=self.settings.image_quality,
                     optimize=False,  # Disable optimization
                     subsampling=2  # 4:2:0 chroma subsampling for speed
                 )
