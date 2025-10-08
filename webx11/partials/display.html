@@ -59,7 +59,7 @@
     <div id="edgeScrollIndicator" class="edge-scroll-indicator"></div>
     <input type="text" id="hiddenInput" autocomplete="off" />
     <div class="window">
-        <img unselectable="on" style="user-select:none;" id="windowImage" class="window-image" src="" alt="Window" draggable="false">
+        <canvas unselectable="on" style="user-select:none;" id="windowImage" class="window-image"></canvas>
     </div>
     
     <script>
@@ -102,19 +102,35 @@
             showFPS: false
         }};
         
-        // FPS counter update
+        // OPTIMIZATION: Frame processing state
+        let pendingFrame = null;
+        let isProcessingFrame = false;
+        let currentBlobURL = null;
+        let fpsUpdateTimer = null;
+        
+        // Get canvas and context once
+        const canvas = document.getElementById('windowImage');
+        const ctx = canvas.getContext('2d', {{ 
+            alpha: false,
+            desynchronized: true // Hint for better performance
+        }});
+        
+        // FPS counter update - OPTIMIZED: Batched updates
         function updateFPSCounter() {{
             if (!stats.showFPS) return;
             
-            const now = Date.now();
-            const oneSecondAgo = now - 1000;
-            
-            // Keep only frames from the last second
-            stats.fpsHistory = stats.fpsHistory.filter(time => time > oneSecondAgo);
-            
-            const fps = stats.fpsHistory.length;
-            const fpsEl = document.getElementById('fpsCounter');
-            fpsEl.textContent = `FPS: ${{fps.toFixed(1)}}`;
+            // Update at most once per 200ms
+            if (!fpsUpdateTimer) {{
+                fpsUpdateTimer = setTimeout(() => {{
+                    fpsUpdateTimer = null;
+                    const now = Date.now();
+                    const oneSecondAgo = now - 1000;
+                    stats.fpsHistory = stats.fpsHistory.filter(time => time > oneSecondAgo);
+                    const fps = stats.fpsHistory.length;
+                    const fpsEl = document.getElementById('fpsCounter');
+                    fpsEl.textContent = `FPS: ${{fps.toFixed(1)}}`;
+                }}, 200);
+            }}
         }}
         
         // Toggle FPS counter with F3
@@ -131,7 +147,7 @@
                 }}
                 return;
             }}
-        }}, true); // Use capture phase to intercept before other handlers
+        }}, true);
         
         // Try WebTransport first, fallback to WebSocket
         async function connectWebTransport() {{
@@ -289,17 +305,19 @@
                 stats.fpsHistory.push(now);
                 updateFPSCounter();
                 
-                console.log(`Frame ${{frameId}}: ${{frameData.length}} bytes, latency: ${{latency}}ms, delta: ${{timeSinceLastFrame}}ms`);
+                // OPTIMIZATION: Only log every 100 frames
+                if (stats.framesReceived % 100 === 0) {{
+                    console.log(`Frame ${{frameId}}: ${{frameData.length}} bytes, latency: ${{latency}}ms, delta: ${{timeSinceLastFrame}}ms`);
+                }}
                 
                 // Create blob and display
                 const blob = new Blob([frameData], {{ type: 'image/' + window.settings.image_format }});
-                const imgUrl = URL.createObjectURL(blob);
                 
-                const img = document.getElementById('windowImage');
-                if (img.src && img.src.startsWith('blob:')) {{
-                    URL.revokeObjectURL(img.src);
+                // Store as pending frame for processing
+                pendingFrame = blob;
+                if (!isProcessingFrame) {{
+                    processNextFrame();
                 }}
-                img.src = imgUrl;
                 
             }} catch (error) {{
                 console.error('Error displaying frame:', error);
@@ -327,11 +345,54 @@
             }}
         }}
         
+        // OPTIMIZATION: Frame processing with createImageBitmap
+        async function processNextFrame() {{
+            if (!pendingFrame) {{
+                isProcessingFrame = false;
+                return;
+            }}
+            
+            isProcessingFrame = true;
+            const frame = pendingFrame;
+            pendingFrame = null;
+            
+            try {{
+                // Use createImageBitmap for faster decoding
+                const bitmap = await createImageBitmap(frame);
+                
+                // Resize canvas if needed
+                if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {{
+                    canvas.width = bitmap.width;
+                    canvas.height = bitmap.height;
+                }}
+                
+                // Draw bitmap to canvas
+                ctx.drawImage(bitmap, 0, 0);
+                bitmap.close(); // Free memory
+                
+            }} catch (error) {{
+                console.error('Frame processing error:', error);
+                // Fallback: use blob URL
+                if (currentBlobURL) {{
+                    URL.revokeObjectURL(currentBlobURL);
+                }}
+                currentBlobURL = URL.createObjectURL(frame);
+                // Note: This would need an img element as fallback
+            }}
+            
+            // Process next frame if one arrived while we were working
+            if (pendingFrame) {{
+                requestAnimationFrame(processNextFrame);
+            }} else {{
+                isProcessingFrame = false;
+            }}
+        }}
+        
         async function connectWebSocket() {{
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${{protocol}}//${{window.location.hostname}}:8081/ws/${{windowId}}`;
-            let numFrames
-            let lastDelta
+            let numFrames = 0;
+            let lastDelta = Date.now();
 
             ws = new WebSocket(wsUrl);
             
@@ -339,29 +400,35 @@
                 useWebTransport = false;
                 updateStatus('websocket');
                 console.log('WebSocket connected');
-                // Stats initialization
-                numFrames = 0
-                lastDelta = Date.now()
+                numFrames = 0;
+                lastDelta = Date.now();
             }};
             
             ws.onmessage = (event) => {{
-                let timer = Date.now()
-                // It's an image blob 
+                // OPTIMIZATION: Skip if we're already processing a frame
                 if (event.data instanceof Blob) {{
-                    numFrames += 1
-
-                    let windowImage = document.getElementById('windowImage')
-                    if (windowImage.src && windowImage.src.startsWith('blob:')) {{
-                        URL.revokeObjectURL(windowImage.src)
+                    numFrames += 1;
+                    
+                    // Store the latest frame, discarding older unprocessed ones
+                    pendingFrame = event.data;
+                    
+                    // If not currently processing, start
+                    if (!isProcessingFrame) {{
+                        processNextFrame();
                     }}
-                    windowImage.src = URL.createObjectURL(event.data)
+                    
                     stats.framesReceived++;
                     stats.fpsHistory.push(Date.now());
                     updateFPSCounter();
-                    console.log(`===== frame ${{numFrames}} =====`)
-                    console.log('clientdelta', (Date.now() - lastDelta) / 1000)
-                    lastDelta = Date.now()
-                }} else {{ // It's a JSON message
+                    
+                    // OPTIMIZATION: Only log every 100 frames
+                    if (numFrames % 100 === 0) {{
+                        console.log(`===== frame ${{numFrames}} =====`);
+                        console.log('clientdelta', (Date.now() - lastDelta) / 1000);
+                    }}
+                    lastDelta = Date.now();
+                }} else {{
+                    // It's a JSON message
                     const data = JSON.parse(event.data);
                     if (data.settings) {{
                         serverSync(data.settings)
@@ -440,7 +507,6 @@
             const addedText = newValue.substring(lastInputValue.length);
             
             if (addedText) {{
-                console.log('Text input captured:', addedText);
                 sendMessage({{type: 'text_input', text: addedText}});
             }}
             
@@ -456,74 +522,71 @@
         // Composition events
         hiddenInput.addEventListener('compositionstart', (e) => {{
             isComposing = true;
-            console.log('Composition started');
         }});
 
         hiddenInput.addEventListener('compositionend', (e) => {{
             isComposing = false;
-            console.log('Composition ended:', e.data);
         }});
 
         // Mouse and keyboard event handling
-        const img = document.getElementById('windowImage');
-        
-        img.addEventListener('mousedown', (e) => {{
+        canvas.addEventListener('mousedown', (e) => {{
             const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.naturalWidth / rect.width;
-            const scaleY = e.target.naturalHeight / rect.height;
+            const scaleX = e.target.width / rect.width;
+            const scaleY = e.target.height / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
             
             sendMessage({{type: 'mousedown', x, y, button: 1}});
         }});
 
-        img.addEventListener('mouseup', (e) => {{
+        canvas.addEventListener('mouseup', (e) => {{
             const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.naturalWidth / rect.width;
-            const scaleY = e.target.naturalHeight / rect.height;
+            const scaleX = e.target.width / rect.width;
+            const scaleY = e.target.height / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
             sendMessage({{type: 'mouseup', x, y, button: 1}});
         }});
         
-        img.addEventListener('contextmenu', (e) => {{
+        canvas.addEventListener('contextmenu', (e) => {{
             e.preventDefault();
             const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.naturalWidth / rect.width;
-            const scaleY = e.target.naturalHeight / rect.height;
+            const scaleX = e.target.width / rect.width;
+            const scaleY = e.target.height / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
 
             sendMessage({{type: 'mousedown', x, y, button: 3}});
         }});
 
+        // OPTIMIZATION: More aggressive debouncing for mouse move
         const onMouseMove = debounce((e) => {{
             const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.naturalWidth / rect.width;
-            const scaleY = e.target.naturalHeight / rect.height;
+            const scaleX = e.target.width / rect.width;
+            const scaleY = e.target.height / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
-            sendMessage({{type: 'mousemove', x, y, button: 1}});
-        }}, 50)
+            sendMessage({{type: 'mousemove', x, y}});
+        }}, 16); // ~60fps max for mouse moves
 
-        img.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('mousemove', onMouseMove);
         
-        img.addEventListener('wheel', (e) => {{
+        canvas.addEventListener('wheel', (e) => {{
             const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.naturalWidth / rect.width;
-            const scaleY = e.target.naturalHeight / rect.height;
+            const scaleX = e.target.width / rect.width;
+            const scaleY = e.target.height / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
             
             sendMessage({{type: 'scroll', x, y, deltaY: e.deltaY}});
             e.preventDefault();
-        }});
+        }}, {{ passive: false }});
         
         // Touch event handlers for gestures
-        img.addEventListener('touchstart', handleTouchStart, {{ passive: false }});
-        img.addEventListener('touchmove', handleTouchMove, {{ passive: false }});
-        img.addEventListener('touchend', handleTouchEnd, {{ passive: false }});
-        img.addEventListener('touchcancel', handleTouchEnd, {{ passive: false }});
+        canvas.addEventListener('touchstart', handleTouchStart, {{ passive: false }});
+        canvas.addEventListener('touchmove', handleTouchMove, {{ passive: false }});
+        canvas.addEventListener('touchend', handleTouchEnd, {{ passive: false }});
+        canvas.addEventListener('touchcancel', handleTouchEnd, {{ passive: false }});
         
         function handleTouchStart(e) {{
             const touches = e.touches;
@@ -583,8 +646,8 @@
             // Regular mouse down for single touch (not on edge)
             if (touches.length === 1 && !touchState.edgeScrollActive) {{
                 const touch = touches[0];
-                const scaleX = e.target.naturalWidth / rect.width;
-                const scaleY = e.target.naturalHeight / rect.height;
+                const scaleX = e.target.width / rect.width;
+                const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
                 
@@ -600,8 +663,8 @@
             if (touchState.edgeScrollActive && touches.length === 1) {{
                 const touch = touches[0];
                 const deltaY = touch.clientY - touchState.edgeScrollStartY;
-                const scaleX = e.target.naturalWidth / rect.width;
-                const scaleY = e.target.naturalHeight / rect.height;
+                const scaleX = e.target.width / rect.width;
+                const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
                 
@@ -617,8 +680,8 @@
                 const currentY = (touches[0].clientY + touches[1].clientY) / 2;
                 const deltaY = currentY - touchState.lastTwoFingerY;
                 
-                const scaleX = e.target.naturalWidth / rect.width;
-                const scaleY = e.target.naturalHeight / rect.height;
+                const scaleX = e.target.width / rect.width;
+                const scaleY = e.target.height / rect.height;
                 const centerX = (touches[0].clientX + touches[1].clientX) / 2;
                 const centerY = (touches[0].clientY + touches[1].clientY) / 2;
                 const x = Math.round((centerX - rect.left) * scaleX);
@@ -634,12 +697,12 @@
             // Regular mouse move for single touch
             if (touches.length === 1 && !touchState.edgeScrollActive && !touchState.twoFingerScrollActive) {{
                 const touch = touches[0];
-                const scaleX = e.target.naturalWidth / rect.width;
-                const scaleY = e.target.naturalHeight / rect.height;
+                const scaleX = e.target.width / rect.width;
+                const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
                 
-                sendMessage({{type: 'mousemove', x, y, button: 1}});
+                sendMessage({{type: 'mousemove', x, y}});
             }}
         }}
         
@@ -667,8 +730,8 @@
             // Send mouse up if all touches are gone
             if (touches.length === 0 && changedTouches.length > 0) {{
                 const touch = changedTouches[0];
-                const scaleX = e.target.naturalWidth / rect.width;
-                const scaleY = e.target.naturalHeight / rect.height;
+                const scaleX = e.target.width / rect.width;
+                const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
                 

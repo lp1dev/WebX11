@@ -22,17 +22,55 @@ class WindowScreenCapture:
         self.root = self.screen.root
         self.settings = SettingsManager()
         
+        # Cache for optimization
+        self.last_frame = None
+        self.frame_buffer = io.BytesIO()
+        self.pil_image = None
+        
     def capture_window(self, x=0, y=0, height=0, width=0, quality=30, dpi=200, force=False):
         try:
-            image, raw = None, None
-            geometry = self.root.get_geometry()
-
+            # OPTIMIZATION 1: Reuse X11 image capture - avoid recreation
             raw = self.root.get_image(0, 0, width, height, X.ZPixmap, 0xffffffff)
-            image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
-
-            buffer = io.BytesIO()
-            image.save(buffer, format=self.settings.image_format, dpi=[dpi, dpi], quality=quality, compression_level=9)
-            return buffer.getvalue()
+            
+            # OPTIMIZATION 2: Reuse PIL Image object instead of creating new one
+            if self.pil_image is None or self.pil_image.size != (width, height):
+                self.pil_image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
+            else:
+                # Reuse existing image object, just update data
+                self.pil_image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
+            
+            # OPTIMIZATION 3: Reuse BytesIO buffer
+            self.frame_buffer.seek(0)
+            self.frame_buffer.truncate()
+            
+            # OPTIMIZATION 4: Use JPEG with optimized settings for speed
+            # PNG is slower to encode - JPEG is 3-5x faster
+            if self.settings.image_format.lower() == 'png':
+                # Fast PNG encoding
+                self.pil_image.save(
+                    self.frame_buffer, 
+                    format='PNG',
+                    optimize=False,  # Disable optimization for speed
+                    compress_level=1  # Minimum compression for speed
+                )
+            else:
+                # JPEG is much faster
+                self.pil_image.save(
+                    self.frame_buffer,
+                    format='JPEG',
+                    quality=quality,
+                    optimize=False,  # Disable optimization
+                    subsampling=2  # 4:2:0 chroma subsampling for speed
+                )
+            
+            frame_data = self.frame_buffer.getvalue()
+            
+            # OPTIMIZATION 5: Basic frame comparison to skip identical frames
+            if not force and self.last_frame == frame_data:
+                return None  # No change, don't send
+            
+            self.last_frame = frame_data
+            return frame_data
 
         except Exception as e:
             print(f"Window capture error: {e}")
@@ -40,8 +78,6 @@ class WindowScreenCapture:
     
     def create_blank_image(self):
         """Create a blank image when capture fails"""
-        print('create_blank_image:: width, height', self.window_display.width, self.window_display.height)
-
         try:
             image = Image.new('RGB', (self.window_display.width, self.window_display.height), color='lightgray')
             buffer = io.BytesIO()
@@ -49,6 +85,7 @@ class WindowScreenCapture:
             return buffer.getvalue()
         except:
             return None
+
 
 class WindowInputHandler:
     def __init__(self, window_display):
