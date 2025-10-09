@@ -70,7 +70,11 @@ Create a `settings.json` file in the project root:
   "max_width": 3440,
   "max_height": 1440,
   "max_fps": 30,
-  "can_start_executables": false
+  "can_start_executables": false,
+  "webtransport_host": "localhost",
+  "host": "127.0.0.1",
+  "cors_unsafe_allow_all": false,
+  "image_format": "WEBP"
 }
 ```
 
