@@ -5,6 +5,7 @@ import time
 import os
 
 from Xlib import X
+import Xlib.threaded
 from webx11.window import WindowScreenCapture, WindowInputHandler
 from webx11.settings import SettingsManager
 from io import BytesIO

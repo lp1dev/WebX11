@@ -6,6 +6,7 @@ from webx11.settings import SettingsManager
 try:
     import Xlib
     import Xlib.display
+    import Xlib.threaded
     from Xlib import X, XK
     from Xlib.ext import xtest
 except ImportError:
