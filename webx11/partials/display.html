@@ -334,8 +334,9 @@
         }}
         
         async function setup() {{
-            const request = await fetch("/settings.json")
-            let response = await request.json()
+            const request = await fetch("settings.json")
+        let response = await request.json()
+	console.log('Settings response', response)
             window.settings = response.settings
             if (window.settings && window.settings.transport == 'webtransport') {{
                 connectWebTransport()
