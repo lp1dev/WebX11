@@ -336,11 +336,11 @@
         async function setup() {{
             const request = await fetch("/settings.json")
         let response = await request.json()
-	if (response['settings']) {
+	if (response['settings']) {{
 	window.settings = response.settings
-	} else {
+	}} else {{
 	window.settings = response
-	}
+	}}
 	console.log('Settings response', response, window.settings, response['settings'])
             window.settings = response
             if (window.settings && window.settings.transport == 'webtransport') {{
