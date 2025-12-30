@@ -136,7 +136,7 @@
         // Toggle FPS counter with F3
         document.addEventListener('keydown', (e) => {{
 	    if (window.parent) {{
-	       window.parent.postMessage("keydown", `${{windowId}},${{e.key}}`);
+	       window.parent.postMessage({{"window":windowId, "e":e}}, window.location.toString());
 	    }}
             if (e.key === 'F3') {{
                 e.preventDefault();
