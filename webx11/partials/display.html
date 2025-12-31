@@ -137,7 +137,7 @@
         document.addEventListener('keydown', (e) => {{
 	    if (window.parent) {{
 	       console.log(window.parent)
-	       window.parent.postMessage({{"window":windowId, "e": JSON.parse(JSON.stringify(e))}}, "*");
+	       window.parent.postMessage({{"event_id": "window_keydown", "window":windowId, "e": JSON.parse(JSON.stringify(e))}}, "*");
 	    }}
             if (e.key === 'F3') {{
                 e.preventDefault();
