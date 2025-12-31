@@ -10,5 +10,5 @@
   "webtransport_host": "localhost",
   "host": "127.0.0.1",
   "cors_unsafe_allow_all": false,
-  "image_format": "WEBP"
+  "image_format": "JPEG"
 }
