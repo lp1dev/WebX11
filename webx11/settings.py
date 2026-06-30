@@ -1,6 +1,7 @@
 import json
 import os
 
+
 class SettingsManager:
     def __init__(self, filename='settings.json'):
         self.settings_file = filename
@@ -15,7 +16,7 @@ class SettingsManager:
         self.check_settings()
 
     def check_settings(self):
-        # Either resize-x11 (resize x11 window based on viewport size), 
+        # Either resize-x11 (resize x11 window based on viewport size),
         #       none (no resizing), stretch (maximize in width and height)
         if self.settings.get('resize_mode') in ['resize-x11', 'none', 'stretch']:
             self.resize_mode = self.settings.get('resize_mode')
@@ -36,22 +37,32 @@ class SettingsManager:
         if isinstance(self.settings.get('max_fps'), int):
             self.fps = self.settings.get('max_fps')
             self.max_fps = self.settings.get('max_fps')
+
+        # Tile size for dirty-region diffing. Larger -> fewer/bigger tiles
+        # (less per-tile overhead, more wasted area per change); smaller ->
+        # tighter dirty regions but more encode calls. 256 is a good default.
+        if isinstance(self.settings.get('tile_size'), int) and self.settings.get('tile_size') >= 32:
+            self.tile_size = self.settings.get('tile_size')
+        else:
+            self.tile_size = 256
+
         self.host = self.settings.get('host')
         self.webtransport_host = self.settings.get('webtransport_host')
         self.cors_unsafe_allow_all = self.settings.get('cors_unsafe_allow_all')
         self.image_format = self.settings.get('image_format')
-        
+
         if isinstance(self.settings.get('can_start_executables'), bool):
             self.can_start_executables = self.settings.get('can_start_executables')
         else:
             self.can_start_executables = False
         return
-    
+
     def dump_json(self):
-        return json.dumps({ "settings" : {
+        return json.dumps({"settings": {
             "resize_mode": self.resize_mode,
             "transport": self.transport,
             "image_format": self.image_format,
             "max_height": self.max_height,
-            "max_width": self.max_width
+            "max_width": self.max_width,
+            "tile_size": self.tile_size
         }})

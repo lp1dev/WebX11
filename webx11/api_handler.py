@@ -12,7 +12,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.display_manager = display_manager
         self.settings = SettingsManager()
         super().__init__(*args, **kwargs)
-    
+
     def log_message(self, format, *args):
         pass
 
@@ -20,13 +20,13 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS,DELETE")
-    
+
     def do_OPTIONS(self):
         self.send_response(200)
         if self.settings.cors_unsafe_allow_all:
             self.send_cors_headers()
         self.end_headers()
-    
+
     def do_GET(self):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
@@ -41,7 +41,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self.serve_settings()
         else:
             self.send_error(404, "Not Found")
-    
+
     def do_POST(self):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
@@ -61,7 +61,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self.handle_close_display(parsed_path)
         else:
             self.send_error(404, "Not Found")
-    
+
     def serve_index(self):
         self.send_response(302)
         id = len(self.display_manager.get_all_displays())
@@ -106,7 +106,7 @@ class APIHandler(BaseHTTPRequestHandler):
             if data.get('executable') is None:
                 self.send_error(400, "Missing parameter: executable.")
                 return
-            
+
             process = self.display_manager.start_executable(display_id, data.get('executable'))
             display.executable = data.get('executable')
             self.send_response(200)
@@ -115,7 +115,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"message": "OK", "display": display.display_id, "process": process.pid}).encode('utf-8'))
-            
+
         except json.JSONDecodeError:
             self.send_error(400, "Invalid JSON")
         except Exception as e:
@@ -128,39 +128,39 @@ class APIHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
         self.send_header('Content-type', 'application/json')
         self.end_headers()
-        
+
         displays = []
         for display in self.display_manager.get_all_displays():
             display_info = display.get_window_info()
             displays.append(display_info)
-        
+
         self.wfile.write(json.dumps(displays).encode('utf-8'))
-    
+
     def serve_display(self, parsed_path):
         try:
             display_id = int(parsed_path.path.split('/')[-1])
         except (ValueError, IndexError):
             self.send_error(404, "Invalid display ID")
             return
-        
+
         display = self.display_manager.get_display(display_id)
         if not display:
             self.send_error(404, "Display not found")
             return
-        
+
         self.send_response(200)
         if self.settings.cors_unsafe_allow_all:
             self.send_cors_headers()
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        
+
         app_name = f"Display {display_id}"
-    
+
         with open(html_path, "r") as f:
             html_content = f.read()
             html_content = html_content.format(top=0, left=0, app_name=app_name, display_id=display_id)
         self.wfile.write(html_content.encode('utf-8'))
-    
+
     def handle_close_display(self, parsed_path):
         try:
             display_id = int(parsed_path.path.split('/')[-1])
@@ -182,25 +182,23 @@ class APIHandler(BaseHTTPRequestHandler):
         if content_length == 0:
             self.send_error(400, "No data provided")
             return
-        
-        # Verifying parameters
+
         try:
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data)
             if data.get('width') is None or data.get('height') is None:
                 self.send_error(400, "Missing parameters width and height")
                 return
-            
-            # Creating a new display
+
             display = self.display_manager.create_display(data.get('width'), data.get('height'))
-            
+
             self.send_response(200)
             if self.settings.cors_unsafe_allow_all:
                 self.send_cors_headers()
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"message": "OK", "display": display.display_id}).encode('utf-8'))
-            
+
         except json.JSONDecodeError:
             self.send_error(400, "Invalid JSON")
         except Exception as e:

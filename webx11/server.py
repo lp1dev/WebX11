@@ -39,10 +39,10 @@ async def main_async():
     HTTP_PORT = 8080
     WEBTRANSPORT_PORT = 4433
     WEBSOCKET_PORT = 8081
-    
+
     print("Starting X11 Web Display Server with HTTP API...")
     print("=" * 50)
-    
+
     # Parsing settings
     settings = SettingsManager()
 
@@ -58,10 +58,10 @@ async def main_async():
         print("Error: Xvfb is not installed or not in PATH")
         print("Install it with: sudo apt-get install xvfb")
         sys.exit(1)
-    
+
     # Initialize managers
     display_manager = DisplayManager()
-    
+
     websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
 
     webtransport_server = None
@@ -73,25 +73,24 @@ async def main_async():
 
     # Register cleanup function
     atexit.register(lambda: cleanup(display_manager, websocket_handler))
-    
-    print(f"✅ X11 Web Display Server with HTTP API started!")
-    print(f"🌐 HTTP interface: http://{HOST}:{HTTP_PORT}")
-    print(f"🔌 WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
+
+    print(f"X11 Web Display Server with HTTP API started!")
+    print(f"HTTP interface: http://{HOST}:{HTTP_PORT}")
+    print(f"WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
     if webtransport_server:
-        print(f"🚀 WebTransport server: https://{WEBTRANSPORT_HOST}:{WEBTRANSPORT_PORT}")
+        print(f"WebTransport server: https://{WEBTRANSPORT_HOST}:{WEBTRANSPORT_PORT}")
     print("\nAvailable HTTP Routes:")
     print("  GET  /              - Main interface")
-    print("  GET  /applications  - List available applications")
-    print("  POST /start         - Start an application")
-    print("  GET  /windows       - List running windows") 
-    print("  GET  /windows/{id}  - Access specific window")
+    print("  GET  /displays      - List running displays")
+    print("  POST /display       - Start a display")
+    print("  GET  /display/{id}  - Access specific display")
     print("\nPress Ctrl+C to stop the server")
     print("=" * 50)
-    
+
     # Create and start HTTP server
     # TODO replace the current HTTP server with something more robust using jinja2 templates
     http_server = ThreadedHTTPServer(display_manager, (HOST, HTTP_PORT), handler_factory(display_manager))
-    
+
     # Run HTTP server in a separated thread
     import threading
     http_thread = threading.Thread(target=http_server.serve_forever)
@@ -101,7 +100,6 @@ async def main_async():
     # If a parameter is passed, the executable is started
     process = None
     if len(sys.argv) > 1:
-        # Creating the display
         display = display_manager.create_display(settings.max_width, settings.max_height)
         process = display_manager.start_executable(display.display_id, argv[1])
 

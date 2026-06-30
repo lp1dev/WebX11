@@ -61,7 +61,7 @@
     <div class="window">
         <canvas unselectable="on" style="user-select:none;" id="windowImage" class="window-image"></canvas>
     </div>
-    
+
     <script>
         const debounce_timeout = 10;
 
@@ -78,11 +78,11 @@
         let ws = null;
         let datagramWriter = null;
         let useWebTransport = false;
-        
+
         // Track composition state for dead keys
         let isComposing = false;
         let lastInputValue = '';
-        
+
         // Touch gesture tracking
         let touchState = {{
             lastTapTime: 0,
@@ -93,7 +93,7 @@
             lastTwoFingerY: 0,
             touches: new Map()
         }};
-        
+
         // Stats
         let stats = {{
             framesReceived: 0,
@@ -101,25 +101,24 @@
             fpsHistory: [],
             showFPS: false
         }};
-        
-        // OPTIMIZATION: Frame processing state
-        let pendingFrame = null;
-        let isProcessingFrame = false;
-        let currentBlobURL = null;
+
+        // Tile frame queue. Frames MUST be applied in order and none dropped:
+        // each frame carries only the tiles that changed, so a skipped frame
+        // would leave stale pixels until that region happens to change again.
+        let frameQueue = [];
+        let processingQueue = false;
         let fpsUpdateTimer = null;
-        
+
         // Get canvas and context once
         const canvas = document.getElementById('windowImage');
-        const ctx = canvas.getContext('2d', {{ 
+        const ctx = canvas.getContext('2d', {{
             alpha: false,
             desynchronized: true // Hint for better performance
         }});
-        
-        // FPS counter update - OPTIMIZED: Batched updates
+
+        // FPS counter update - batched
         function updateFPSCounter() {{
             if (!stats.showFPS) return;
-            
-            // Update at most once per 200ms
             if (!fpsUpdateTimer) {{
                 fpsUpdateTimer = setTimeout(() => {{
                     fpsUpdateTimer = null;
@@ -132,7 +131,7 @@
                 }}, 200);
             }}
         }}
-        
+
         // Toggle FPS counter with F3
         document.addEventListener('keydown', (e) => {{
             if (e.key === 'F3') {{
@@ -148,55 +147,162 @@
                 return;
             }}
         }}, true);
-        
-        // Try WebTransport first, fallback to WebSocket
-        async function connectWebTransport() {{
-            if (!window.WebTransport) {{
-                console.log('WebTransport not supported, falling back to WebSocket');
-                await connectWebSocket();
+
+        // ---- Tile frame format (must match webx11/window.py) ----------------
+        // Frame header (big-endian, 20 bytes):
+        //   u8 version, u8 flags, u16 frame_id, u16 width, u16 height,
+        //   u16 tile_count, u16 reserved, u64 timestamp_ms
+        // Per tile (12-byte header + payload):
+        //   u16 x, u16 y, u16 w, u16 h, u32 data_len, <data_len bytes image>
+        function imageMimeType() {{
+            const fmt = (window.settings && window.settings.image_format)
+                ? window.settings.image_format.toLowerCase() : 'webp';
+            return 'image/' + fmt;
+        }}
+
+        function handleFrameBytes(buf) {{
+            // buf is an ArrayBuffer holding one serialized tile frame
+            frameQueue.push(buf);
+            if (!processingQueue) {{
+                processFrameQueue();
+            }}
+        }}
+
+        async function processFrameQueue() {{
+            processingQueue = true;
+            while (frameQueue.length > 0) {{
+                const buf = frameQueue.shift();
+                try {{
+                    await renderTileFrame(buf);
+                }} catch (e) {{
+                    console.error('Frame render error:', e);
+                }}
+            }}
+            processingQueue = false;
+        }}
+
+        async function renderTileFrame(buf) {{
+            const dv = new DataView(buf);
+            const u8 = new Uint8Array(buf);
+
+            const version = dv.getUint8(0);
+            if (version !== 1) {{
+                console.warn('Unknown frame version', version);
                 return;
             }}
-            
+            const flags = dv.getUint8(1);
+            const frameId = dv.getUint16(2);
+            const fw = dv.getUint16(4);
+            const fh = dv.getUint16(6);
+            const tileCount = dv.getUint16(8);
+            const ts = Number(dv.getBigUint64(12));
+
+            // Resizing the canvas clears it. The frame that changes the
+            // dimensions is always a keyframe (every tile present), so the
+            // tiles below repaint the whole surface.
+            if (canvas.width !== fw || canvas.height !== fh) {{
+                canvas.width = fw;
+                canvas.height = fh;
+            }}
+
+            const mime = imageMimeType();
+            let off = 20;
+            const jobs = [];
+
+            for (let i = 0; i < tileCount; i++) {{
+                const tx = dv.getUint16(off);
+                const ty = dv.getUint16(off + 2);
+                const tw = dv.getUint16(off + 4);
+                const th = dv.getUint16(off + 6);
+                const len = dv.getUint32(off + 8);
+                off += 12;
+
+                const data = u8.subarray(off, off + len);
+                off += len;
+
+                // Blob copies the bytes synchronously, so the view stays valid.
+                const blob = new Blob([data], {{ type: mime }});
+                jobs.push(
+                    createImageBitmap(blob)
+                        .then(bmp => {{ ctx.drawImage(bmp, tx, ty); bmp.close(); }})
+                        .catch(err => console.error('Tile decode error:', err))
+                );
+            }}
+
+            await Promise.all(jobs);
+
+            // Stats
+            const now = Date.now();
+            const latency = now - ts;
+            stats.framesReceived++;
+            stats.fpsHistory.push(now);
+            updateFPSCounter();
+            if (stats.framesReceived % 100 === 0) {{
+                console.log(`Frame ${{frameId}}: ${{tileCount}} tiles, ${{buf.byteLength}} bytes, latency: ${{latency}}ms`);
+            }}
+        }}
+
+        // Try WebTransport first, cleanly fall back to WebSocket on any failure.
+        // Exactly one transport "wins": connectionSettled guards against the
+        // timeout and a late ready/closed rejection both firing.
+        let connectionSettled = false;
+
+        function fallbackToWebSocket(reason) {{
+            if (connectionSettled) return;
+            connectionSettled = true;
+            console.log('WebTransport unavailable, using WebSocket (' + reason + ')');
+            try {{ if (transport) transport.close(); }} catch (e) {{}}
+            transport = null;
+            datagramWriter = null;
+            useWebTransport = false;
+            connectWebSocket();
+        }}
+
+        async function connectWebTransport() {{
+            if (!window.WebTransport) {{
+                fallbackToWebSocket('not supported');
+                return;
+            }}
+
             try {{
                 const hostname = window.location.hostname || 'localhost';
                 const wtUrl = `https://${{hostname}}:4433/wt/${{windowId}}`;
-                let connected = false;
                 transport = new WebTransport(wtUrl);
 
-                setTimeout(() => {{
-                    if (!connected) {{
-                        console.log('Falling back to WebSocket');
-                        connectWebSocket();
-                        throw new Error('WebTransport:: TimeoutError');
+                // Attach the closed handler immediately so its rejection can
+                // never surface as an uncaught promise, even if ready rejects.
+                const onClosed = () => {{
+                    if (useWebTransport) {{
+                        useWebTransport = false;
+                        updateStatus('disconnected');
                     }}
-                }}, 2000);
-                
+                }};
+                transport.closed.then(onClosed).catch(onClosed);
+
+                const timeout = setTimeout(() => fallbackToWebSocket('timeout'), 2000);
+
                 await transport.ready;
-                connected = true;
+                clearTimeout(timeout);
+
+                // If the timeout already moved us to WebSocket, drop this one.
+                if (connectionSettled) {{
+                    try {{ transport.close(); }} catch (e) {{}}
+                    transport = null;
+                    return;
+                }}
+                connectionSettled = true;
+
                 useWebTransport = true;
                 updateStatus('webtransport');
                 console.log('WebTransport connected');
-                
+
                 datagramWriter = transport.datagrams.writable.getWriter();
-                
-                // Handle incoming datagrams (control messages only)
                 handleIncomingDatagrams();
-                
-                // Handle incoming streams (frame data)
                 handleIncomingStreams();
-                
-                transport.closed.then(() => {{
-                    console.log('WebTransport closed');
-                    useWebTransport = false;
-                    updateStatus('disconnected');
-                }}).catch(err => {{
-                    console.error('WebTransport error:', err);
-                    useWebTransport = false;
-                    updateStatus('disconnected');
-                }});
-                
+
             }} catch (error) {{
-                console.error('WebTransport connection failed:', error);
+                // ready rejected (server refused, cert mismatch, nothing on :4433)
+                fallbackToWebSocket((error && error.message) ? error.message : 'connection failed');
             }}
         }}
 
@@ -211,7 +317,7 @@
                 sendMessage({{
                     type: 'resize',
                     width: document.documentElement.clientWidth,
-                    height: document.documentElement.clientHeight 
+                    height: document.documentElement.clientHeight
                 }});
             }}
         }}, 100)
@@ -220,12 +326,10 @@
             try {{
                 const reader = transport.datagrams.readable.getReader();
                 console.log('Started listening for datagrams (control messages)...');
-                
+
                 while (true) {{
                     const {{ value, done }} = await reader.read();
-                    
                     if (done) break;
-                    
                     handleControlMessage(value);
                 }}
             }} catch (error) {{
@@ -237,13 +341,11 @@
             try {{
                 const reader = transport.incomingUnidirectionalStreams.getReader();
                 console.log('Started listening for streams (frame data)...');
-                
+
                 while (true) {{
                     const {{ value: stream, done }} = await reader.read();
-                    
                     if (done) break;
-                    
-                    // Handle each stream in parallel
+                    // Handle each stream (one per frame)
                     handleFrameStream(stream);
                 }}
             }} catch (error) {{
@@ -256,74 +358,31 @@
                 const reader = stream.getReader();
                 const chunks = [];
                 let totalLength = 0;
-                
+
                 // Read all chunks from the stream
                 while (true) {{
                     const {{ value, done }} = await reader.read();
-                    
                     if (done) break;
-                    
                     chunks.push(value);
                     totalLength += value.length;
                 }}
-                
-                // Combine all chunks
+
+                // Combine all chunks into one exact-size buffer
                 const fullData = new Uint8Array(totalLength);
                 let offset = 0;
                 for (const chunk of chunks) {{
                     fullData.set(chunk, offset);
                     offset += chunk.length;
                 }}
-                
-                // Parse header (14 bytes)
-                const view = new DataView(fullData.buffer, fullData.byteOffset, fullData.byteLength);
-                const frameId = view.getUint16(0);
-                const dataSize = view.getUint32(2);
-                const timestamp = Number(view.getBigUint64(6));
-                
-                // Extract frame data
-                const frameData = fullData.slice(14, 14 + dataSize);
-                
-                // Display frame
-                displayFrame(frameData, frameId, timestamp);
-                
+
+                // The serialized tile frame carries its own header now.
+                handleFrameBytes(fullData.buffer);
+
             }} catch (error) {{
                 console.error('Error handling frame stream:', error);
             }}
         }}
-        
-        function displayFrame(frameData, frameId, timestamp) {{
-            try {{
-                stats.framesReceived++;
-                
-                const now = Date.now();
-                const latency = now - timestamp;
-                const timeSinceLastFrame = now - stats.lastFrameTime;
-                stats.lastFrameTime = now;
-                
-                // Add to FPS history
-                stats.fpsHistory.push(now);
-                updateFPSCounter();
-                
-                // OPTIMIZATION: Only log every 100 frames
-                if (stats.framesReceived % 100 === 0) {{
-                    console.log(`Frame ${{frameId}}: ${{frameData.length}} bytes, latency: ${{latency}}ms, delta: ${{timeSinceLastFrame}}ms`);
-                }}
-                
-                // Create blob and display
-                const blob = new Blob([frameData], {{ type: 'image/' + window.settings.image_format }});
-                
-                // Store as pending frame for processing
-                pendingFrame = blob;
-                if (!isProcessingFrame) {{
-                    processNextFrame();
-                }}
-                
-            }} catch (error) {{
-                console.error('Error displaying frame:', error);
-            }}
-        }}
-        
+
         function handleControlMessage(data) {{
             try {{
                 const message = JSON.parse(new TextDecoder().decode(data));
@@ -332,17 +391,16 @@
                 console.error('Error parsing control message:', e);
             }}
         }}
-        
+
         async function setup() {{
             const request = await fetch("/settings.json")
-        let response = await request.json()
-	if (response['settings']) {{
-	window.settings = response.settings
-	}} else {{
-	window.settings = response
-	}}
-	console.log('Settings response', response, window.settings, response['settings'])
-            window.settings = response
+            let response = await request.json()
+            if (response['settings']) {{
+                window.settings = response.settings
+            }} else {{
+                window.settings = response
+            }}
+            console.log('Settings response', response, window.settings, response['settings'])
             if (window.settings && window.settings.transport == 'webtransport') {{
                 connectWebTransport()
             }} else {{
@@ -350,50 +408,7 @@
                 connectWebSocket()
             }}
         }}
-        
-        // OPTIMIZATION: Frame processing with createImageBitmap
-        async function processNextFrame() {{
-            if (!pendingFrame) {{
-                isProcessingFrame = false;
-                return;
-            }}
-            
-            isProcessingFrame = true;
-            const frame = pendingFrame;
-            pendingFrame = null;
-            
-            try {{
-                // Use createImageBitmap for faster decoding
-                const bitmap = await createImageBitmap(frame);
-                
-                // Resize canvas if needed
-                if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {{
-                    canvas.width = bitmap.width;
-                    canvas.height = bitmap.height;
-                }}
-                
-                // Draw bitmap to canvas
-                ctx.drawImage(bitmap, 0, 0);
-                bitmap.close(); // Free memory
-                
-            }} catch (error) {{
-                console.error('Frame processing error:', error);
-                // Fallback: use blob URL
-                if (currentBlobURL) {{
-                    URL.revokeObjectURL(currentBlobURL);
-                }}
-                currentBlobURL = URL.createObjectURL(frame);
-                // Note: This would need an img element as fallback
-            }}
-            
-            // Process next frame if one arrived while we were working
-            if (pendingFrame) {{
-                requestAnimationFrame(processNextFrame);
-            }} else {{
-                isProcessingFrame = false;
-            }}
-        }}
-        
+
         async function connectWebSocket() {{
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${{protocol}}//${{window.location.hostname}}:8081/ws/${{windowId}}`;
@@ -401,7 +416,8 @@
             let lastDelta = Date.now();
 
             ws = new WebSocket(wsUrl);
-            
+            ws.binaryType = 'arraybuffer';
+
             ws.onopen = () => {{
                 useWebTransport = false;
                 updateStatus('websocket');
@@ -409,61 +425,50 @@
                 numFrames = 0;
                 lastDelta = Date.now();
             }};
-            
+
             ws.onmessage = (event) => {{
-                // OPTIMIZATION: Skip if we're already processing a frame
-                if (event.data instanceof Blob) {{
-                    numFrames += 1;
-                    
-                    // Store the latest frame, discarding older unprocessed ones
-                    pendingFrame = event.data;
-                    
-                    // If not currently processing, start
-                    if (!isProcessingFrame) {{
-                        processNextFrame();
-                    }}
-                    
-                    stats.framesReceived++;
-                    stats.fpsHistory.push(Date.now());
-                    updateFPSCounter();
-                    
-                    // OPTIMIZATION: Only log every 100 frames
-                    if (numFrames % 100 === 0) {{
-                        console.log(`===== frame ${{numFrames}} =====`);
-                        console.log('clientdelta', (Date.now() - lastDelta) / 1000);
-                    }}
-                    lastDelta = Date.now();
-                }} else {{
-                    // It's a JSON message
+                if (typeof event.data === 'string') {{
+                    // JSON control / settings message
                     const data = JSON.parse(event.data);
                     if (data.settings) {{
                         serverSync(data.settings)
                     }}
+                    return;
                 }}
+
+                // Binary tile frame (ArrayBuffer)
+                numFrames += 1;
+                handleFrameBytes(event.data);
+
+                if (numFrames % 100 === 0) {{
+                    console.log(`===== frame ${{numFrames}} =====`);
+                    console.log('clientdelta', (Date.now() - lastDelta) / 1000);
+                }}
+                lastDelta = Date.now();
             }};
-            
+
             ws.onclose = () => {{
                 updateStatus('reconnecting');
                 setTimeout(connectWebSocket, 5000);
             }};
-            
+
             ws.onerror = (error) => {{
                 console.error('WebSocket error:', error);
             }};
         }}
-        
+
         function updateStatus(status) {{
             const statusEl = document.getElementById('connectionStatus');
             statusEl.className = 'connection-status';
-            
+
             switch(status) {{
                 case 'webtransport':
                     statusEl.classList.add('status-webtransport');
-                    statusEl.textContent = 'WebTransport (Streams)';
+                    statusEl.textContent = 'WebTransport (Tiles)';
                     break;
                 case 'websocket':
                     statusEl.classList.add('status-websocket');
-                    statusEl.textContent = 'WebSocket';
+                    statusEl.textContent = 'WebSocket (Tiles)';
                     break;
                 case 'disconnected':
                     statusEl.classList.add('status-disconnected');
@@ -475,7 +480,7 @@
                     break;
             }}
         }}
-        
+
         async function sendMessage(message) {{
             if (useWebTransport && datagramWriter) {{
                 try {{
@@ -488,17 +493,17 @@
                 await ws.send(JSON.stringify(message));
             }}
         }}
-        
+
         // Front-end event handling
         addEventListener("resize", resize)
 
         // Hidden input for capturing text with dead keys
         const hiddenInput = document.getElementById('hiddenInput');
-        
+
         // Detect if device is mobile/tablet
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
                          ('ontouchstart' in window);
-        
+
         // Keep focus on hidden input to capture all text (desktop only or after double-tap on mobile)
         if (!isMobile) {{
             document.addEventListener('click', () => {{
@@ -506,19 +511,18 @@
             }});
             hiddenInput.focus();
         }}
-        
+
         // Handle text input from hidden field
         hiddenInput.addEventListener('input', (e) => {{
             const newValue = hiddenInput.value;
             const addedText = newValue.substring(lastInputValue.length);
-            
+
             if (addedText) {{
                 sendMessage({{type: 'text_input', text: addedText}});
             }}
-            
+
             lastInputValue = newValue;
-            
-            // Clear input periodically to prevent it from getting too long
+
             if (newValue.length > 100) {{
                 hiddenInput.value = '';
                 lastInputValue = '';
@@ -541,7 +545,7 @@
             const scaleY = e.target.height / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
-            
+
             sendMessage({{type: 'mousedown', x, y, button: 1}});
         }});
 
@@ -553,7 +557,7 @@
             const y = Math.round(e.offsetY * scaleY);
             sendMessage({{type: 'mouseup', x, y, button: 1}});
         }});
-        
+
         canvas.addEventListener('contextmenu', (e) => {{
             e.preventDefault();
             const rect = e.target.getBoundingClientRect();
@@ -565,7 +569,7 @@
             sendMessage({{type: 'mousedown', x, y, button: 3}});
         }});
 
-        // OPTIMIZATION: More aggressive debouncing for mouse move
+        // More aggressive debouncing for mouse move
         const onMouseMove = debounce((e) => {{
             const rect = e.target.getBoundingClientRect();
             const scaleX = e.target.width / rect.width;
@@ -576,30 +580,29 @@
         }}, 16); // ~60fps max for mouse moves
 
         canvas.addEventListener('mousemove', onMouseMove);
-        
+
         canvas.addEventListener('wheel', (e) => {{
             const rect = e.target.getBoundingClientRect();
             const scaleX = e.target.width / rect.width;
             const scaleY = e.target.height / rect.height;
             const x = Math.round(e.offsetX * scaleX);
             const y = Math.round(e.offsetY * scaleY);
-            
+
             sendMessage({{type: 'scroll', x, y, deltaY: e.deltaY}});
             e.preventDefault();
         }}, {{ passive: false }});
-        
+
         // Touch event handlers for gestures
         canvas.addEventListener('touchstart', handleTouchStart, {{ passive: false }});
         canvas.addEventListener('touchmove', handleTouchMove, {{ passive: false }});
         canvas.addEventListener('touchend', handleTouchEnd, {{ passive: false }});
         canvas.addEventListener('touchcancel', handleTouchEnd, {{ passive: false }});
-        
+
         function handleTouchStart(e) {{
             const touches = e.touches;
             const rect = e.target.getBoundingClientRect();
             const edgeThreshold = 30; // pixels from right edge
-            
-            // Update touch tracking
+
             for (let touch of touches) {{
                 touchState.touches.set(touch.identifier, {{
                     x: touch.clientX,
@@ -608,14 +611,13 @@
                     startY: touch.clientY
                 }});
             }}
-            
+
             // Check for double-tap (mobile keyboard activation)
             if (isMobile && touches.length === 1) {{
                 const now = Date.now();
                 const timeSinceLastTap = now - touchState.lastTapTime;
-                
+
                 if (timeSinceLastTap < 300) {{
-                    // Double tap detected
                     touchState.tapCount = 2;
                     hiddenInput.focus();
                     console.log('Double-tap: keyboard activated');
@@ -626,12 +628,12 @@
                 }}
                 touchState.lastTapTime = now;
             }}
-            
+
             // Check for edge scroll (single finger on right edge)
             if (touches.length === 1) {{
                 const touch = touches[0];
                 const distanceFromRightEdge = rect.right - touch.clientX;
-                
+
                 if (distanceFromRightEdge <= edgeThreshold) {{
                     touchState.edgeScrollActive = true;
                     touchState.edgeScrollStartY = touch.clientY;
@@ -640,7 +642,7 @@
                     return;
                 }}
             }}
-            
+
             // Check for two-finger scroll
             if (touches.length === 2) {{
                 touchState.twoFingerScrollActive = true;
@@ -648,7 +650,7 @@
                 e.preventDefault();
                 return;
             }}
-            
+
             // Regular mouse down for single touch (not on edge)
             if (touches.length === 1 && !touchState.edgeScrollActive) {{
                 const touch = touches[0];
@@ -656,15 +658,15 @@
                 const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
+
                 sendMessage({{type: 'mousedown', x, y, button: 1}});
             }}
         }}
-        
+
         function handleTouchMove(e) {{
             const touches = e.touches;
             const rect = e.target.getBoundingClientRect();
-            
+
             // Handle edge scroll
             if (touchState.edgeScrollActive && touches.length === 1) {{
                 const touch = touches[0];
@@ -673,33 +675,31 @@
                 const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
-                // Send scroll message (converting touch delta to wheel delta)
+
                 sendMessage({{type: 'scroll', x, y, deltaY: -deltaY * 2}});
                 touchState.edgeScrollStartY = touch.clientY;
                 e.preventDefault();
                 return;
             }}
-            
+
             // Handle two-finger scroll
             if (touchState.twoFingerScrollActive && touches.length === 2) {{
                 const currentY = (touches[0].clientY + touches[1].clientY) / 2;
                 const deltaY = currentY - touchState.lastTwoFingerY;
-                
+
                 const scaleX = e.target.width / rect.width;
                 const scaleY = e.target.height / rect.height;
                 const centerX = (touches[0].clientX + touches[1].clientX) / 2;
                 const centerY = (touches[0].clientY + touches[1].clientY) / 2;
                 const x = Math.round((centerX - rect.left) * scaleX);
                 const y = Math.round((centerY - rect.top) * scaleY);
-                
-                // Send scroll message (converting touch delta to wheel delta)
+
                 sendMessage({{type: 'scroll', x, y, deltaY: -deltaY * 2}});
                 touchState.lastTwoFingerY = currentY;
                 e.preventDefault();
                 return;
             }}
-            
+
             // Regular mouse move for single touch
             if (touches.length === 1 && !touchState.edgeScrollActive && !touchState.twoFingerScrollActive) {{
                 const touch = touches[0];
@@ -707,89 +707,81 @@
                 const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
+
                 sendMessage({{type: 'mousemove', x, y}});
             }}
         }}
-        
+
         function handleTouchEnd(e) {{
             const touches = e.touches;
             const rect = e.target.getBoundingClientRect();
-            
-            // Clean up edge scroll
+
             if (touchState.edgeScrollActive) {{
                 touchState.edgeScrollActive = false;
                 document.getElementById('edgeScrollIndicator').classList.remove('active');
             }}
-            
-            // Clean up two-finger scroll
+
             if (touchState.twoFingerScrollActive && touches.length < 2) {{
                 touchState.twoFingerScrollActive = false;
             }}
-            
-            // Update touch tracking
+
             const changedTouches = e.changedTouches;
             for (let touch of changedTouches) {{
                 touchState.touches.delete(touch.identifier);
             }}
-            
-            // Send mouse up if all touches are gone
+
             if (touches.length === 0 && changedTouches.length > 0) {{
                 const touch = changedTouches[0];
                 const scaleX = e.target.width / rect.width;
                 const scaleY = e.target.height / rect.height;
                 const x = Math.round((touch.clientX - rect.left) * scaleX);
                 const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
+
                 sendMessage({{type: 'mouseup', x, y, button: 1}});
             }}
         }}
-        
+
         // Only send special keys via key events, regular text via input event
         document.addEventListener('keydown', (e) => {{
             if (e.key === 'F3') return; // Already handled above
-            
+
             const key = getKeyFromEvent(e);
-            
-            // Only send special keys (not regular text)
+
             if (key && !isRegularTextKey(e)) {{
                 sendMessage({{type: 'keydown', key}});
                 e.preventDefault();
             }}
         }});
-        
+
         document.addEventListener('keyup', (e) => {{
             if (e.key === 'F3') return;
-            
+
             const key = getKeyFromEvent(e);
-            
-            // Only send special keys (not regular text)
+
             if (key && !isRegularTextKey(e)) {{
                 sendMessage({{type: 'keyup', key}});
                 e.preventDefault();
             }}
         }});
-        
+
         function isRegularTextKey(e) {{
-            // Regular text keys should be handled by the input event
-            // Special keys should be sent as key events
             return e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
         }}
-        
+
         function getKeyFromEvent(e) {{
             const specialKeys = {{
                 'Escape': 'escape', 'Enter': 'enter', 'Tab': 'tab', 'Backspace': 'backspace',
-                'Delete': 'delete', 'ArrowLeft': 'left', 'ArrowRight': 'right', 
+                'Delete': 'delete', 'ArrowLeft': 'left', 'ArrowRight': 'right',
                 'ArrowUp': 'up', 'ArrowDown': 'down', 'Shift': 'shift', 'Control': 'control',
                 'Alt': 'alt', 'Meta': 'super', ' ': 'space'
             }};
-            
+
             if (specialKeys[e.key]) return specialKeys[e.key];
             if (e.key.match(/^F[1-9]$|^F1[0-2]$/)) return e.key.toLowerCase();
             if (e.key.length === 1) return e.key;
             return null;
         }}
-        
+
         // Start connection
         setup()
         window.setupInterval = setInterval(() => {{
