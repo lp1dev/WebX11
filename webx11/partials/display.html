@@ -15,6 +15,9 @@
             font-size: 12px;
             font-family: sans-serif;
             display: none;
+            z-index: 1000;
+            max-width: calc(100vw - 40px);
+            overflow-wrap: anywhere;
         }}
         .status-webtransport {{ background: #4CAF50; color: white; }}
         .status-websocket {{ background: #FF9800; color: white; }}
@@ -54,7 +57,7 @@
     <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
 </head>
 <body>
-    <div id="connectionStatus" class="connection-status status-disconnected">Connecting...</div>
+    <div id="connectionStatus" class="connection-status status-disconnected" role="status" aria-live="polite">Connecting...</div>
     <div id="fpsCounter" class="fps-counter">FPS: 0.0</div>
     <div id="edgeScrollIndicator" class="edge-scroll-indicator"></div>
     <input type="text" id="hiddenInput" autocomplete="off" />
@@ -78,6 +81,7 @@
         let ws = null;
         let datagramWriter = null;
         let useWebTransport = false;
+        let connectionStatus = 'connecting';
 
         // Track composition state for dead keys
         let isComposing = false;
@@ -138,9 +142,8 @@
                 e.preventDefault();
                 stats.showFPS = !stats.showFPS;
                 const fpsEl = document.getElementById('fpsCounter');
-                const statusEl = document.getElementById('connectionStatus')
                 fpsEl.style.display = stats.showFPS ? 'block' : 'none';
-                statusEl.style.display = stats.showFPS ? 'block' : 'none'
+                updateStatus(connectionStatus);
                 if (stats.showFPS) {{
                     stats.fpsHistory = [];
                 }}
@@ -415,7 +418,14 @@
             let numFrames = 0;
             let lastDelta = Date.now();
 
-            ws = new WebSocket(wsUrl);
+            try {{
+                ws = new WebSocket(wsUrl);
+            }} catch (error) {{
+                console.error('WebSocket connection failed:', error);
+                updateStatus('error');
+                setTimeout(connectWebSocket, 5000);
+                return;
+            }}
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = () => {{
@@ -454,14 +464,21 @@
 
             ws.onerror = (error) => {{
                 console.error('WebSocket error:', error);
+                updateStatus('error');
             }};
         }}
 
         function updateStatus(status) {{
+            connectionStatus = status;
             const statusEl = document.getElementById('connectionStatus');
             statusEl.className = 'connection-status';
+            const connectionFailed = ['error', 'disconnected', 'reconnecting'].includes(status);
+            statusEl.style.display = connectionFailed || stats.showFPS ? 'block' : 'none';
 
             switch(status) {{
+                case 'connecting':
+                    statusEl.textContent = 'Connecting...';
+                    break;
                 case 'webtransport':
                     statusEl.classList.add('status-webtransport');
                     statusEl.textContent = 'WebTransport (Tiles)';
@@ -474,9 +491,10 @@
                     statusEl.classList.add('status-disconnected');
                     statusEl.textContent = 'Disconnected';
                     break;
+                case 'error':
                 case 'reconnecting':
                     statusEl.classList.add('status-disconnected');
-                    statusEl.textContent = 'Reconnecting';
+                    statusEl.textContent = 'WebSocket connection failed or was lost. Check that the server is running and port 8081 is accessible. Retrying in 5 seconds...';
                     break;
             }}
         }}
