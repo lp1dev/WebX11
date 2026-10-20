@@ -108,8 +108,13 @@ python -m webx11.server
 
 The server will start on:
 - HTTP API: `http://localhost:8080`
-- WebSocket: `ws://localhost:8081`
+- WebSocket: `ws://localhost:8080/ws/{display_id}` (shares the HTTP port)
 - WebTransport: `https://localhost:4433`
+
+Only TCP port 8080 is needed for HTTP and WebSocket connections. When
+WebTransport is enabled, it also uses UDP port 4433. Behind an HTTPS reverse
+proxy, WebSockets use `wss://` on the same host and port as the web interface;
+configure the proxy to forward WebSocket upgrades for `/ws/`.
 
 ### Creating a Display
 

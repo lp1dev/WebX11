@@ -1,6 +1,6 @@
 import json
 import asyncio
-import websockets
+from aiohttp import web, WSMsgType
 from datetime import datetime
 from webx11.settings import SettingsManager
 
@@ -15,19 +15,21 @@ class WebSocketHandler:
         self.settings = SettingsManager()
         self.lastupdate = None
 
-    async def handle_websocket(self, websocket, path="/"):
-        path = websocket.request.path
+    async def handle_websocket(self, request):
+        path = request.path
         try:
             display_id = int(path.strip('/').split('/')[-1])
         except (ValueError, IndexError):
             print(f"Invalid WebSocket path: {path}")
-            return
+            raise web.HTTPNotFound(text="Invalid WebSocket display ID")
 
         window_display = self.window_manager.get_display(display_id)
         if not window_display:
             print(f"Window {display_id} not found for WebSocket connection")
-            return
+            raise web.HTTPNotFound(text="Display not found")
 
+        websocket = web.WebSocketResponse()
+        await websocket.prepare(request)
         client = {"websocket": websocket, "display_id": display_id}
         self.connected_clients.append(client)
         print(f"WebSocket client connected for window {display_id}. Total clients: {len(self.connected_clients)}")
@@ -39,17 +41,19 @@ class WebSocketHandler:
             # getting their diffs). Subsequent diffs arrive via the broadcast.
             await self.send_keyframe(websocket, display_id)
             async for message in websocket:
-                await self.handle_client_message(websocket, message, display_id)
-        except websockets.exceptions.ConnectionClosed:
+                if message.type in (WSMsgType.TEXT, WSMsgType.BINARY):
+                    await self.handle_client_message(websocket, message.data, display_id)
+        except ConnectionError:
             print(f"WebSocket connection closed for window {display_id}")
         finally:
             for c in list(self.connected_clients):
                 if c.get('websocket') == websocket:
                     self.connected_clients.remove(c)
             print(f"WebSocket client disconnected for window {display_id}. Total clients: {len(self.connected_clients)}")
+        return websocket
 
     async def send_settings(self, websocket):
-        await websocket.send(self.settings.dump_json())
+        await websocket.send_str(self.settings.dump_json())
 
     async def handle_client_message(self, websocket, message, display_id):
         """Handle incoming WebSocket messages for a specific window"""
@@ -144,7 +148,7 @@ class WebSocketHandler:
             frame = await loop.run_in_executor(
                 window_display.capture_executor, window_display.capture_keyframe)
             if frame:
-                await websocket.send(frame)
+                await websocket.send_bytes(frame)
         except Exception as e:
             print(f"Error sending keyframe for {display_id}: {e}")
 
@@ -175,7 +179,7 @@ class WebSocketHandler:
                     IMAGES_SENT += 1
                     for s in sockets:
                         try:
-                            await s.send(frame)
+                            await s.send_bytes(frame)
                         except Exception:
                             # Drop is handled by the per-connection finally block.
                             pass
@@ -194,13 +198,3 @@ class WebSocketHandler:
         if self.window_update_task:
             self.window_update_task.cancel()
             self.window_update_task = None
-
-
-async def run_websocket_server(window_manager, host='127.0.0.1', port=8081):
-    websocket_handler = WebSocketHandler(window_manager)
-    websocket_server = await websockets.serve(
-        websocket_handler.handle_websocket,
-        host,
-        port
-    )
-    return websocket_server, websocket_handler

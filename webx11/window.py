@@ -270,7 +270,7 @@ class WindowInputHandler:
         key_map.update({
             'escape': 0xff1b, 'esc': 0xff1b,
             'backspace': 0xff08,
-            'enter': 0xff8d, 'return': 0xff0d,
+            'enter': 0xff0d, 'return': 0xff0d,
             'tab': 0xff09,
             'capslock': 0xffe5,
             'shift': 0xffe1, 'shift_l': 0xffe1, 'shift_r': 0xffe2,
