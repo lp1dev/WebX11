@@ -8,18 +8,9 @@ import atexit
 import asyncio
 import subprocess
 from sys import argv
-from http.server import HTTPServer
-from socketserver import ThreadingMixIn
-from webx11.api_handler import APIHandler
+from webx11.http_server import run_server
 from webx11.display import DisplayManager
 from webx11.settings import SettingsManager
-from webx11 import websockets
-
-class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """Handle requests in separate threads"""
-    def __init__(self, display_manager, *args, **kwargs):
-        self.display_manager = display_manager
-        super().__init__(*args, **kwargs)
 
 def cleanup(display_manager, websocket_handler):
     """Cleanup function to stop all window displays on exit"""
@@ -28,17 +19,10 @@ def cleanup(display_manager, websocket_handler):
     display_manager.stop_all()
 
 
-def handler_factory(display_manager):
-    """Create a handler factory with the managers"""
-    def create_handler(*args, **kwargs):
-        return APIHandler(display_manager, *args, **kwargs)
-    return create_handler
-
 async def main_async():
     # Configuration
     HTTP_PORT = 8080
     WEBTRANSPORT_PORT = 4433
-    WEBSOCKET_PORT = 8081
 
     print("Starting X11 Web Display Server with HTTP API...")
     print("=" * 50)
@@ -62,7 +46,7 @@ async def main_async():
     # Initialize managers
     display_manager = DisplayManager()
 
-    websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
+    http_server, websocket_handler = await run_server(display_manager, HOST, HTTP_PORT)
 
     webtransport_server = None
     if settings.transport == 'webtransport':
@@ -76,7 +60,7 @@ async def main_async():
 
     print(f"X11 Web Display Server with HTTP API started!")
     print(f"HTTP interface: http://{HOST}:{HTTP_PORT}")
-    print(f"WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
+    print(f"WebSocket endpoint: ws://{HOST}:{HTTP_PORT}/ws/{{display_id}}")
     if webtransport_server:
         print(f"WebTransport server: https://{WEBTRANSPORT_HOST}:{WEBTRANSPORT_PORT}")
     print("\nAvailable HTTP Routes:")
@@ -86,16 +70,6 @@ async def main_async():
     print("  GET  /display/{id}  - Access specific display")
     print("\nPress Ctrl+C to stop the server")
     print("=" * 50)
-
-    # Create and start HTTP server
-    # TODO replace the current HTTP server with something more robust using jinja2 templates
-    http_server = ThreadedHTTPServer(display_manager, (HOST, HTTP_PORT), handler_factory(display_manager))
-
-    # Run HTTP server in a separated thread
-    import threading
-    http_thread = threading.Thread(target=http_server.serve_forever)
-    http_thread.daemon = True
-    http_thread.start()
 
     # If a parameter is passed, the executable is started
     process = None
@@ -111,10 +85,8 @@ async def main_async():
     finally:
         if process:
             process.terminate()
-        websocket_server.close()
-        await websocket_server.wait_closed()
+        await http_server.cleanup()
         # TODO: Make sure that the webtransport server is closed too
-        http_server.shutdown()
         display_manager.stop_all()
 
 def main():

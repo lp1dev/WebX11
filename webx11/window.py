@@ -234,6 +234,9 @@ class WindowInputHandler:
 
         # Key mapping
         self.key_map = self._create_key_map()
+        # X11 key state outlives browser connections. Track ownership so a
+        # disconnect releases only that client's keys, not another viewer's.
+        self._key_owners = {}
 
     def _create_key_map(self):
         """Create mapping from common key names to X11 keycodes"""
@@ -270,7 +273,7 @@ class WindowInputHandler:
         key_map.update({
             'escape': 0xff1b, 'esc': 0xff1b,
             'backspace': 0xff08,
-            'enter': 0xff8d, 'return': 0xff0d,
+            'enter': 0xff0d, 'return': 0xff0d,
             'tab': 0xff09,
             'capslock': 0xffe5,
             'shift': 0xffe1, 'shift_l': 0xffe1, 'shift_r': 0xffe2,
@@ -314,25 +317,50 @@ class WindowInputHandler:
             print(f"Scroll event error: {e}")
             return False
 
-    def send_key_event(self, keycode, pressed=True):
+    def _send_keycode_event(self, keycode, pressed, client):
+        owners = self._key_owners.get(keycode, set())
+        if not pressed and owners - {client}:
+            owners.discard(client)
+            return True
+
+        event_type = X.KeyPress if pressed else X.KeyRelease
+        xtest.fake_input(self.display, event_type, keycode)
+        self.display.sync()
+        if pressed:
+            self._key_owners.setdefault(keycode, set()).add(client)
+        else:
+            self._key_owners.pop(keycode, None)
+        return True
+
+    def release_keys(self, client):
+        """Release keys left down by a disconnected or unfocused client."""
+        for keycode, owners in list(self._key_owners.items()):
+            if client in owners:
+                try:
+                    self._send_keycode_event(keycode, False, client)
+                except Exception as e:
+                    print(f"Key release error: {e}")
+
+    def send_key_event(self, keycode, pressed=True, client=None):
         """Send keyboard event to this window's display"""
         try:
             keycode = self.display.keysym_to_keycode(keycode)
-            event_type = X.KeyPress if pressed else X.KeyRelease
-            xtest.fake_input(self.display, event_type, keycode)
-            self.display.sync()
-            return True
+            if not keycode:
+                return False
+            return self._send_keycode_event(keycode, pressed, client)
         except Exception as e:
             print(f"Key event error: {e}")
             return False
 
-    def send_key_event_by_name(self, key_name, pressed=True):
+    def send_key_event_by_name(self, key_name, pressed=True, client=None):
         """Send keyboard event using key name"""
         try:
             keycode = self.key_map.get(key_name.lower())
             if keycode is None:
                 print(f"Unknown key: {key_name}")
                 return False
+            if client is not None:
+                return self.send_key_event(keycode, pressed, client=client)
             return self.send_key_event(keycode, pressed)
         except Exception as e:
             print(f"Key event by name error: {e}")

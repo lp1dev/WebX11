@@ -16,12 +16,13 @@ try:
     from aioquic.h3.connection import H3_ALPN, H3Connection
     from aioquic.h3.events import (
         H3Event,
+        DataReceived,
         HeadersReceived,
         WebTransportStreamDataReceived,
         DatagramReceived,
     )
     from aioquic.quic.configuration import QuicConfiguration
-    from aioquic.quic.events import ProtocolNegotiated, StreamReset, QuicEvent
+    from aioquic.quic.events import ConnectionTerminated, ProtocolNegotiated, StreamReset, QuicEvent
     WEBTRANSPORT_AVAILABLE = True
 except ImportError:
     WEBTRANSPORT_AVAILABLE = False
@@ -66,6 +67,8 @@ class WebTransportHandler:
             print(f"Error handling stream data: {e}")
 
     async def handle_client_message(self, data):
+        if not self.running:
+            return
         print('got message', data)
         msg_type = data.get('type')
         window_display = self.window_manager.get_display(self.display_id)
@@ -85,6 +88,8 @@ class WebTransportHandler:
             await self.handle_key_event(data, True)
         elif msg_type == 'keyup':
             await self.handle_key_event(data, False)
+        elif msg_type == 'release_keys':
+            window_display.input_handler.release_keys(self)
         elif msg_type == 'text_input':
             await self.handle_text_input(data)
         elif msg_type == 'refresh':
@@ -129,7 +134,7 @@ class WebTransportHandler:
         if key:
             window_display = self.window_manager.get_display(self.display_id)
             if window_display and window_display.input_handler:
-                window_display.input_handler.send_key_event_by_name(key, pressed)
+                window_display.input_handler.send_key_event_by_name(key, pressed, client=self)
 
     async def handle_text_input(self, data):
         text = data.get('text', '')
@@ -209,6 +214,9 @@ class WebTransportHandler:
 
     def stop(self):
         self.running = False
+        window_display = self.window_manager.get_display(self.display_id)
+        if window_display and window_display.input_handler:
+            window_display.input_handler.release_keys(self)
 
 
 class WebTransportProtocol(QuicConnectionProtocol):
@@ -223,8 +231,12 @@ class WebTransportProtocol(QuicConnectionProtocol):
     def quic_event_received(self, event: QuicEvent):
         if isinstance(event, ProtocolNegotiated):
             self._http = H3Connection(self._quic, enable_webtransport=True)
-        elif isinstance(event, StreamReset) and self._handler is not None:
-            self._handler.stop()
+        elif isinstance(event, ConnectionTerminated):
+            self._stop_session()
+            return
+        elif (isinstance(event, StreamReset) and self._handler is not None
+                and event.stream_id == self._handler.session_id):
+            self._stop_session()
 
         if self._http is not None:
             output = self._http.handle_event(event)
@@ -242,6 +254,17 @@ class WebTransportProtocol(QuicConnectionProtocol):
 
         if self._handler:
             self._handler.h3_event_received(event)
+            if (isinstance(event, (DataReceived, HeadersReceived))
+                    and event.stream_id == self._handler.session_id
+                    and event.stream_ended):
+                self._stop_session()
+
+    def _stop_session(self):
+        if self._handler:
+            self._handler.stop()
+        if self._update_task:
+            self._update_task.cancel()
+            self._update_task = None
 
     def _handshake_webtransport(self, stream_id: int, request_headers: dict):
         path = request_headers.get(b":path", b"").decode('utf-8')

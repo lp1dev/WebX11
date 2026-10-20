@@ -32,7 +32,7 @@ setup(
     install_requires=[
         "Pillow>=9.0.0",
         "python-xlib>=0.31",
-        "websockets>=10.0",
+        "aiohttp>=3.9.0,<4",
         "aioquic>=0.9.0"
     ],
     extras_require={
@@ -51,6 +51,7 @@ setup(
     package_data={
         "webx11": [
             "partials/*.html",
+            "static/*.svg",
             "settings.json",
         ],
     },

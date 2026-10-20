@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <title>WebX11</title>
+  <defs>
+    <linearGradient id="background" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#172554"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="12" y1="16" x2="52" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2dd4bf"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#background)"/>
+  <rect x="10" y="14" width="44" height="32" rx="6" stroke="url(#screen)" stroke-width="4"/>
+  <path d="M32 46v7m-9 0h18" stroke="#818cf8" stroke-width="4" stroke-linecap="round"/>
+  <path d="m23 23 16 14m0-14L23 37" stroke="#f0fdfa" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="52" cy="14" r="6" fill="#2dd4bf" stroke="#0f172a" stroke-width="3"/>
+</svg>
