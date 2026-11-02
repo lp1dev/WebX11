@@ -10,6 +10,17 @@ automatic window resizing.
 No VNC, no noVNC, no websockify and no special client software: a `pip install`, one
 command with the binary you want to run, and the app shows up in your browser.
 
+## TL;DR
+
+```bash
+pip install git+https://github.com/lp1dev/WebX11.git
+webx11 {any_binary}
+```
+
+That's it\*, your window is accessible on http://localhost:8080.
+
+*You will also need Xvfb in your $PATH.
+
 ## Overview
 
 WebX11 creates a virtual X11 display with `Xvfb`, captures what your application draws,
