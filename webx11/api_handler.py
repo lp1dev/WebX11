@@ -151,14 +151,12 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         if self.settings.cors_unsafe_allow_all:
             self.send_cors_headers()
-        self.send_header('Content-type', 'text/html')
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
-        
-        app_name = f"Display {display_id}"
-    
+
         with open(html_path, "r") as f:
-            html_content = f.read()
-            html_content = html_content.format(top=0, left=0, app_name=app_name, display_id=display_id)
+            html_content = f.read().replace('%%DISPLAY_ID%%', str(int(display_id)))
         self.wfile.write(html_content.encode('utf-8'))
     
     def handle_close_display(self, parsed_path):

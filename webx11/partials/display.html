@@ -1,805 +1,486 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebTransport Client</title>
-    <style>
-        body {{ margin: 0; padding: 0; background: #000; overflow: hidden; }}
-        .window {{ background: white; padding: 0; border-radius: 0; width: fit-content; }}
-        .window-image {{ cursor: default; }}
-        .connection-status {{
-            position: fixed;
-            top: 0px;
-            right: 10px;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            font-family: sans-serif;
-            display: none;
-        }}
-        .status-webtransport {{ background: #4CAF50; color: white; }}
-        .status-websocket {{ background: #FF9800; color: white; }}
-        .status-disconnected {{ background: #f44336; color: white; }}
-        .fps-counter {{
-            position: fixed;
-            top: 30px;
-            right: 10px;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            font-family: monospace;
-            background: rgba(0, 0, 0, 0.7);
-            color: #0f0;
-            display: none;
-        }}
-        #hiddenInput {{
-            position: absolute;
-            left: -9999px;
-            opacity: 0;
-        }}
-        .edge-scroll-indicator {{
-            position: fixed;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 30px;
-            background: rgba(255, 255, 255, 0.1);
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.3s;
-        }}
-        .edge-scroll-indicator.active {{
-            opacity: 1;
-        }}
-    </style>
-    <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>WebX11 display %%DISPLAY_ID%%</title>
+<style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0e1116; }
+    #windowImage { position: absolute; left: 0; top: 0; display: block; outline: none; touch-action: none;
+                   user-select: none; -webkit-user-select: none; cursor: default; }
+    body.stretch #windowImage { width: 100%; height: 100%; }
+    #ime { position: absolute; left: 0; top: 0; width: 2px; height: 2px; padding: 0; border: 0; margin: 0;
+           opacity: 0; resize: none; overflow: hidden; color: transparent; background: transparent;
+           caret-color: transparent; outline: none; pointer-events: none; z-index: -1; }
+    #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+               flex-direction: column; gap: 14px; background: rgba(14, 17, 22, .72); color: #c9d1d9;
+               font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .02em;
+               opacity: 0; pointer-events: none; transition: opacity .2s; }
+    #overlay.show { opacity: 1; pointer-events: auto; }
+    #overlay .spin { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(255,255,255,.15);
+                     border-top-color: rgba(255,255,255,.8); animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #hud { position: fixed; right: 8px; top: 8px; padding: 6px 9px; border-radius: 6px; display: none;
+           background: rgba(0,0,0,.72); color: #9be9a8; font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace;
+           white-space: pre; pointer-events: none; z-index: 5; }
+    #hud.show { display: block; }
+</style>
 </head>
 <body>
-    <div id="connectionStatus" class="connection-status status-disconnected">Connecting...</div>
-    <div id="fpsCounter" class="fps-counter">FPS: 0.0</div>
-    <div id="edgeScrollIndicator" class="edge-scroll-indicator"></div>
-    <input type="text" id="hiddenInput" autocomplete="off" />
-    <div class="window">
-        <canvas unselectable="on" style="user-select:none;" id="windowImage" class="window-image"></canvas>
-    </div>
-    
-    <script>
-        const debounce_timeout = 10;
+<canvas id="windowImage" tabindex="-1"></canvas>
+<textarea id="ime" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-hidden="true"></textarea>
+<div id="overlay"><div class="spin"></div><div id="overlayText">Connecting…</div></div>
+<div id="hud"></div>
+<script>
+(() => {
+'use strict';
+const DISPLAY_ID = %%DISPLAY_ID%%;
+const canvas = document.getElementById('windowImage');
+const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+const ime = document.getElementById('ime');
+const overlay = document.getElementById('overlay');
+const overlayText = document.getElementById('overlayText');
+const hud = document.getElementById('hud');
+const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+const toParent = (type, extra = {}) => { try { window.parent && window.parent !== window && window.parent.postMessage({ type, display: DISPLAY_ID, ...extra }, '*'); } catch (e) {} };
 
-        function debounce(func, timeout = debounce_timeout){{
-            let timer;
-            return (...args) => {{
-                clearTimeout(timer);
-                timer = setTimeout(() => {{ func.apply(this, args); }}, timeout);
-            }};
-        }}
+let settings = { resize_mode: 'resize-x11' };
+let ws = null;
+let connected = false, everConnected = false, gone = false, reconnectDelay = 400;
 
-        const windowId = {display_id};
-        let transport = null;
-        let ws = null;
-        let datagramWriter = null;
-        let useWebTransport = false;
-        
-        // Track composition state for dead keys
-        let isComposing = false;
-        let lastInputValue = '';
-        
-        // Touch gesture tracking
-        let touchState = {{
-            lastTapTime: 0,
-            tapCount: 0,
-            edgeScrollActive: false,
-            edgeScrollStartY: 0,
-            twoFingerScrollActive: false,
-            lastTwoFingerY: 0,
-            touches: new Map()
-        }};
-        
-        // Stats
-        let stats = {{
-            framesReceived: 0,
-            lastFrameTime: Date.now(),
-            fpsHistory: [],
-            showFPS: false
-        }};
-        
-        // OPTIMIZATION: Frame processing state
-        let pendingFrame = null;
-        let isProcessingFrame = false;
-        let currentBlobURL = null;
-        let fpsUpdateTimer = null;
-        
-        // Get canvas and context once
-        const canvas = document.getElementById('windowImage');
-        const ctx = canvas.getContext('2d', {{ 
-            alpha: false,
-            desynchronized: true // Hint for better performance
-        }});
-        
-        // FPS counter update - OPTIMIZED: Batched updates
-        function updateFPSCounter() {{
-            if (!stats.showFPS) return;
-            
-            // Update at most once per 200ms
-            if (!fpsUpdateTimer) {{
-                fpsUpdateTimer = setTimeout(() => {{
-                    fpsUpdateTimer = null;
-                    const now = Date.now();
-                    const oneSecondAgo = now - 1000;
-                    stats.fpsHistory = stats.fpsHistory.filter(time => time > oneSecondAgo);
-                    const fps = stats.fpsHistory.length;
-                    const fpsEl = document.getElementById('fpsCounter');
-                    fpsEl.textContent = `FPS: ${{fps.toFixed(1)}}`;
-                }}, 200);
-            }}
-        }}
-        
-        // Toggle FPS counter with F3
-        document.addEventListener('keydown', (e) => {{
-	    if (window.parent) {{
-	       window.parent.postMessage({{"event_id": "window_keydown", "window":windowId, "e": {{"ctrlKey": e.ctrlKey, "key": e.key, "isComposing": e.isComposing, "metaKey": e.metaKey, "shiftKey": e.shiftKey}}}}, "*");
-	    }}
-            if (e.key === 'F3') {{
-                e.preventDefault();
-                stats.showFPS = !stats.showFPS;
-                const fpsEl = document.getElementById('fpsCounter');
-                const statusEl = document.getElementById('connectionStatus')
-                fpsEl.style.display = stats.showFPS ? 'block' : 'none';
-                statusEl.style.display = stats.showFPS ? 'block' : 'none'
-                if (stats.showFPS) {{
-                    stats.fpsHistory = [];
-                }}
-                return;
-            }}
-        }}, true);
-        
-        // Try WebTransport first, fallback to WebSocket
-        async function connectWebTransport() {{
-            if (!window.WebTransport) {{
-                console.log('WebTransport not supported, falling back to WebSocket');
-                await connectWebSocket();
-                return;
-            }}
-            
-            try {{
-                const hostname = window.location.hostname || 'localhost';
-                const wtUrl = `https://${{hostname}}:4433/wt/${{windowId}}`;
-                let connected = false;
-                transport = new WebTransport(wtUrl);
+// ------------------------------------------------------------------ stats
+const stats = { bytes: 0, updates: 0, rects: 0, lastSize: 0, drawMs: 0, window: [] };
+window.webx11 = { stats, displayId: DISPLAY_ID };
+function tickStats(size, nrects, drawMs) {
+    const now = performance.now();
+    stats.bytes += size; stats.updates++; stats.rects += nrects; stats.lastSize = size; stats.drawMs = drawMs;
+    stats.window.push([now, size]);
+    while (stats.window.length && now - stats.window[0][0] > 1000) stats.window.shift();
+}
+setInterval(() => {
+    if (!hud.classList.contains('show')) return;
+    const kb = stats.window.reduce((a, [, s]) => a + s, 0) / 1024;
+    hud.textContent = `display ${DISPLAY_ID}  ${canvas.width}x${canvas.height}\n` +
+        `updates/s ${stats.window.length}   ${kb.toFixed(0)} KB/s\n` +
+        `last ${(stats.lastSize / 1024).toFixed(1)} KB   draw ${stats.drawMs.toFixed(1)} ms\n` +
+        `transport websocket`;
+}, 250);
 
-                setTimeout(() => {{
-                    if (!connected) {{
-                        console.log('Falling back to WebSocket');
-                        connectWebSocket();
-                        throw new Error('WebTransport:: TimeoutError');
-                    }}
-                }}, 2000);
-                
-                await transport.ready;
-                connected = true;
-                useWebTransport = true;
-                updateStatus('webtransport');
-                console.log('WebTransport connected');
-                
-                datagramWriter = transport.datagrams.writable.getWriter();
-                
-                // Handle incoming datagrams (control messages only)
-                handleIncomingDatagrams();
-                
-                // Handle incoming streams (frame data)
-                handleIncomingStreams();
-                
-                transport.closed.then(() => {{
-                    console.log('WebTransport closed');
-                    useWebTransport = false;
-                    updateStatus('disconnected');
-                }}).catch(err => {{
-                    console.error('WebTransport error:', err);
-                    useWebTransport = false;
-                    updateStatus('disconnected');
-                }});
-                
-            }} catch (error) {{
-                console.error('WebTransport connection failed:', error);
-            }}
-        }}
+// -------------------------------------------------------------- transport
+function send(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+    }
+}
 
-        async function serverSync(settings) {{
-            console.log('Settings :: ', window.settings)
-            resize()
-            clearInterval(window.setupInterval)
-        }}
+function showOverlay(text) { overlayText.textContent = text; overlay.classList.add('show'); }
+function hideOverlay() { overlay.classList.remove('show'); }
 
-        const resize = debounce(() => {{
-            if (window.settings.resize_mode == 'resize-x11') {{
-                sendMessage({{
-                    type: 'resize',
-                    width: document.documentElement.clientWidth,
-                    height: document.documentElement.clientHeight 
-                }});
-            }}
-        }}, 100)
+function wsUrl() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Standalone: the HTTP UI is on :8080 and the WebSocket server on :8081.
+    if (location.port === '8080') {
+        return `${proto}//${location.hostname}:8081/ws/${DISPLAY_ID}`;
+    }
+    // Behind a reverse proxy: same origin, forward /ws/ to the WebSocket server.
+    return `${proto}//${location.host}/ws/${DISPLAY_ID}`;
+}
 
-        async function handleIncomingDatagrams() {{
-            try {{
-                const reader = transport.datagrams.readable.getReader();
-                console.log('Started listening for datagrams (control messages)...');
-                
-                while (true) {{
-                    const {{ value, done }} = await reader.read();
-                    
-                    if (done) break;
-                    
-                    handleControlMessage(value);
-                }}
-            }} catch (error) {{
-                console.error('Error reading datagrams:', error);
-            }}
-        }}
+function connectWebSocket() {
+    if (gone) return;
+    ws = new WebSocket(wsUrl());
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => {
+        connected = everConnected = true;
+        reconnectDelay = 400;
+        hideOverlay();
+        sendResize(true);
+    };
+    ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') onControl(JSON.parse(ev.data));
+        else onFrame(ev.data);
+    };
+    ws.onclose = (ev) => {
+        connected = false;
+        if (ev.code === 4404) {
+            gone = true;
+            showOverlay('This application is no longer running');
+            toParent('webx11:gone');
+            return;
+        }
+        showOverlay(everConnected ? 'Connection lost, reconnecting…' : 'Connecting…');
+        setTimeout(connectWebSocket, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+    };
+}
 
-        async function handleIncomingStreams() {{
-            try {{
-                const reader = transport.incomingUnidirectionalStreams.getReader();
-                console.log('Started listening for streams (frame data)...');
-                
-                while (true) {{
-                    const {{ value: stream, done }} = await reader.read();
-                    
-                    if (done) break;
-                    
-                    // Handle each stream in parallel
-                    handleFrameStream(stream);
-                }}
-            }} catch (error) {{
-                console.error('Error reading streams:', error);
-            }}
-        }}
+function onControl(msg) {
+    if (msg.settings) {
+        settings = Object.assign(settings, msg.settings);
+        document.body.classList.toggle('stretch', settings.resize_mode === 'stretch');
+        sendResize(true);
+        return;
+    }
+    switch (msg.type) {
+        case 'cursor':
+            canvas.style.cursor = msg.png ? `url(data:image/png;base64,${msg.png}) ${msg.xhot} ${msg.yhot}, default` : 'none';
+            break;
+        case 'clipboard':
+            writeClipboard(msg.text || '');
+            break;
+        case 'app_exit':
+            toParent('webx11:app_exit');
+            break;
+    }
+}
 
-        async function handleFrameStream(stream) {{
-            try {{
-                const reader = stream.getReader();
-                const chunks = [];
-                let totalLength = 0;
-                
-                // Read all chunks from the stream
-                while (true) {{
-                    const {{ value, done }} = await reader.read();
-                    
-                    if (done) break;
-                    
-                    chunks.push(value);
-                    totalLength += value.length;
-                }}
-                
-                // Combine all chunks
-                const fullData = new Uint8Array(totalLength);
-                let offset = 0;
-                for (const chunk of chunks) {{
-                    fullData.set(chunk, offset);
-                    offset += chunk.length;
-                }}
-                
-                // Parse header (14 bytes)
-                const view = new DataView(fullData.buffer, fullData.byteOffset, fullData.byteLength);
-                const frameId = view.getUint16(0);
-                const dataSize = view.getUint32(2);
-                const timestamp = Number(view.getBigUint64(6));
-                
-                // Extract frame data
-                const frameData = fullData.slice(14, 14 + dataSize);
-                
-                // Display frame
-                displayFrame(frameData, frameId, timestamp);
-                
-            }} catch (error) {{
-                console.error('Error handling frame stream:', error);
-            }}
-        }}
-        
-        function displayFrame(frameData, frameId, timestamp) {{
-            try {{
-                stats.framesReceived++;
-                
-                const now = Date.now();
-                const latency = now - timestamp;
-                const timeSinceLastFrame = now - stats.lastFrameTime;
-                stats.lastFrameTime = now;
-                
-                // Add to FPS history
-                stats.fpsHistory.push(now);
-                updateFPSCounter();
-                
-                // OPTIMIZATION: Only log every 100 frames
-                if (stats.framesReceived % 100 === 0) {{
-                    console.log(`Frame ${{frameId}}: ${{frameData.length}} bytes, latency: ${{latency}}ms, delta: ${{timeSinceLastFrame}}ms`);
-                }}
-                
-                // Create blob and display
-                const blob = new Blob([frameData], {{ type: 'image/' + window.settings.image_format }});
-                
-                // Store as pending frame for processing
-                pendingFrame = blob;
-                if (!isProcessingFrame) {{
-                    processNextFrame();
-                }}
-                
-            }} catch (error) {{
-                console.error('Error displaying frame:', error);
-            }}
-        }}
-        
-        function handleControlMessage(data) {{
-            try {{
-                const message = JSON.parse(new TextDecoder().decode(data));
-                console.log('Control message:', message);
-            }} catch (e) {{
-                console.error('Error parsing control message:', e);
-            }}
-        }}
-        
-        async function setup() {{
-            const request = await fetch("/settings.json")
-        let response = await request.json()
-	if (response['settings']) {{
-	window.settings = response.settings
-	}} else {{
-	window.settings = response
-	}}
-	console.log('Settings response', response, window.settings, response['settings'])
-            window.settings = response
-            if (window.settings && window.settings.transport == 'webtransport') {{
-                connectWebTransport()
-            }} else {{
-                console.log(window.settings, window.settings.transport)
-                connectWebSocket()
-            }}
-        }}
-        
-        // OPTIMIZATION: Frame processing with createImageBitmap
-        async function processNextFrame() {{
-            if (!pendingFrame) {{
-                isProcessingFrame = false;
-                return;
-            }}
-            
-            isProcessingFrame = true;
-            const frame = pendingFrame;
-            pendingFrame = null;
-            
-            try {{
-                // Use createImageBitmap for faster decoding
-                const bitmap = await createImageBitmap(frame);
-                
-                // Resize canvas if needed
-                if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {{
-                    canvas.width = bitmap.width;
-                    canvas.height = bitmap.height;
-                }}
-                
-                // Draw bitmap to canvas
-                ctx.drawImage(bitmap, 0, 0);
-                bitmap.close(); // Free memory
-                
-            }} catch (error) {{
-                console.error('Frame processing error:', error);
-                // Fallback: use blob URL
-                if (currentBlobURL) {{
-                    URL.revokeObjectURL(currentBlobURL);
-                }}
-                currentBlobURL = URL.createObjectURL(frame);
-                // Note: This would need an img element as fallback
-            }}
-            
-            // Process next frame if one arrived while we were working
-            if (pendingFrame) {{
-                requestAnimationFrame(processNextFrame);
-            }} else {{
-                isProcessingFrame = false;
-            }}
-        }}
-        
-        async function connectWebSocket() {{
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-	const wsUrl = `${{window.location}}/ws/${{windowId}}`;
-            //const wsUrl = `${{protocol}}//${{window.location.hostname}}:8081/ws/${{windowId}}`;
-            let numFrames = 0;
-            let lastDelta = Date.now();
+// --------------------------------------------------------------- drawing
+let drawChain = Promise.resolve();
+let firstFrame = true;
+const MIME = ['image/jpeg', 'image/png'];
 
-            ws = new WebSocket(wsUrl);
-            
-            ws.onopen = () => {{
-                useWebTransport = false;
-                updateStatus('websocket');
-                console.log('WebSocket connected');
-                numFrames = 0;
-                lastDelta = Date.now();
-            }};
-            
-            ws.onmessage = (event) => {{
-                // OPTIMIZATION: Skip if we're already processing a frame
-                if (event.data instanceof Blob) {{
-                    numFrames += 1;
-                    
-                    // Store the latest frame, discarding older unprocessed ones
-                    pendingFrame = event.data;
-                    
-                    // If not currently processing, start
-                    if (!isProcessingFrame) {{
-                        processNextFrame();
-                    }}
-                    
-                    stats.framesReceived++;
-                    stats.fpsHistory.push(Date.now());
-                    updateFPSCounter();
-                    
-                    // OPTIMIZATION: Only log every 100 frames
-                    if (numFrames % 100 === 0) {{
-                        console.log(`===== frame ${{numFrames}} =====`);
-                        console.log('clientdelta', (Date.now() - lastDelta) / 1000);
-                    }}
-                    lastDelta = Date.now();
-                }} else {{
-                    // It's a JSON message
-                    const data = JSON.parse(event.data);
-                    if (data.settings) {{
-                        serverSync(data.settings)
-                    }}
-                }}
-            }};
-            
-            ws.onclose = () => {{
-                updateStatus('reconnecting');
-                setTimeout(connectWebSocket, 5000);
-            }};
-            
-            ws.onerror = (error) => {{
-                console.error('WebSocket error:', error);
-            }};
-        }}
-        
-        function updateStatus(status) {{
-            const statusEl = document.getElementById('connectionStatus');
-            statusEl.className = 'connection-status';
-            
-            switch(status) {{
-                case 'webtransport':
-                    statusEl.classList.add('status-webtransport');
-                    statusEl.textContent = 'WebTransport (Streams)';
-                    break;
-                case 'websocket':
-                    statusEl.classList.add('status-websocket');
-                    statusEl.textContent = 'WebSocket';
-                    break;
-                case 'disconnected':
-                    statusEl.classList.add('status-disconnected');
-                    statusEl.textContent = 'Disconnected';
-                    break;
-                case 'reconnecting':
-                    statusEl.classList.add('status-disconnected');
-                    statusEl.textContent = 'Reconnecting';
-                    break;
-            }}
-        }}
-        
-        async function sendMessage(message) {{
-            if (useWebTransport && datagramWriter) {{
-                try {{
-                    const data = new TextEncoder().encode(JSON.stringify(message));
-                    await datagramWriter.write(data);
-                }} catch (error) {{
-                    console.error('Error sending via WebTransport:', error);
-                }}
-            }} else if (ws && ws.readyState === WebSocket.OPEN) {{
-                await ws.send(JSON.stringify(message));
-            }}
-        }}
-        
-        // Front-end event handling
-        addEventListener("resize", resize)
+function onFrame(buf) {
+    const size = buf.byteLength;
+    const dv = new DataView(buf);
+    if (size < 14 || dv.getUint8(0) !== 0x56 || dv.getUint8(1) !== 0x58) {
+        // legacy: a whole frame as a single JPEG/PNG
+        const bmp = createImageBitmap(new Blob([buf]));
+        drawChain = drawChain.then(async () => {
+            const b = await bmp;
+            if (canvas.width !== b.width || canvas.height !== b.height) resizeCanvas(b.width, b.height);
+            ctx.drawImage(b, 0, 0); b.close();
+            frameDrawn(size, 1, 0);
+        }).catch(() => {});
+        return;
+    }
+    const flags = dv.getUint8(3), w = dv.getUint16(4, true), h = dv.getUint16(6, true);
+    const n = dv.getUint16(8, true), seq = dv.getUint32(10, true);
+    const rects = [];
+    let off = 14;
+    for (let i = 0; i < n; i++) {
+        const x = dv.getUint16(off, true), y = dv.getUint16(off + 2, true);
+        const fmt = dv.getUint8(off + 8), len = dv.getUint32(off + 10, true);
+        const blob = new Blob([new Uint8Array(buf, off + 14, len)], { type: MIME[fmt] || 'image/png' });
+        rects.push({ x, y, bitmap: createImageBitmap(blob) });  // decode starts now, in parallel
+        off += 14 + len;
+    }
+    drawChain = drawChain.then(async () => {
+        const t0 = performance.now();
+        let bitmaps;
+        try {
+            bitmaps = await Promise.all(rects.map(r => r.bitmap));
+        } catch (e) {
+            console.warn('decode failed, requesting a full refresh', e);
+            send({ type: 'ack', seq });
+            send({ type: 'refresh' });
+            return;
+        }
+        if (canvas.width !== w || canvas.height !== h) resizeCanvas(w, h);
+        for (let i = 0; i < rects.length; i++) {
+            ctx.drawImage(bitmaps[i], rects[i].x, rects[i].y);
+            bitmaps[i].close();
+        }
+        send({ type: 'ack', seq });
+        frameDrawn(size, n, performance.now() - t0);
+    });
+}
 
-        // Hidden input for capturing text with dead keys
-        const hiddenInput = document.getElementById('hiddenInput');
-        
-        // Detect if device is mobile/tablet
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-                         ('ontouchstart' in window);
-        
-        // Keep focus on hidden input to capture all text (desktop only or after double-tap on mobile)
-        if (!isMobile) {{
-            document.addEventListener('click', () => {{
-                hiddenInput.focus();
-            }});
-            hiddenInput.focus();
-        }}
-        
-        // Handle text input from hidden field
-        hiddenInput.addEventListener('input', (e) => {{
-            const newValue = hiddenInput.value;
-            const addedText = newValue.substring(lastInputValue.length);
-            
-            if (addedText) {{
-                sendMessage({{type: 'text_input', text: addedText}});
-            }}
-            
-            lastInputValue = newValue;
-            
-            // Clear input periodically to prevent it from getting too long
-            if (newValue.length > 100) {{
-                hiddenInput.value = '';
-                lastInputValue = '';
-            }}
-        }});
+function frameDrawn(size, n, ms) {
+    tickStats(size, n, ms);
+    if (firstFrame) { firstFrame = false; hideOverlay(); toParent('webx11:ready'); }
+}
 
-        // Composition events
-        hiddenInput.addEventListener('compositionstart', (e) => {{
-            isComposing = true;
-        }});
+function resizeCanvas(w, h) {
+    canvas.width = w;
+    canvas.height = h;
+    if (settings.resize_mode !== 'stretch') {
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+    }
+}
 
-        hiddenInput.addEventListener('compositionend', (e) => {{
-            isComposing = false;
-        }});
+// ----------------------------------------------------------------- resize
+let resizeTimer = null, lastSent = '';
+function sendResize(force) {
+    if (settings.resize_mode !== 'resize-x11') return;
+    clearTimeout(resizeTimer);
+    const go = () => {
+        const w = Math.max(1, Math.floor(document.documentElement.clientWidth));
+        const h = Math.max(1, Math.floor(document.documentElement.clientHeight));
+        const key = w + 'x' + h;
+        if (!force && key === lastSent) return;
+        lastSent = key;
+        send({ type: 'resize', width: w, height: h });
+    };
+    if (force) go(); else resizeTimer = setTimeout(go, 90);
+}
+new ResizeObserver(() => sendResize(false)).observe(document.documentElement);
 
-        // Mouse and keyboard event handling
-        canvas.addEventListener('mousedown', (e) => {{
-            const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.width / rect.width;
-            const scaleY = e.target.height / rect.height;
-            const x = Math.round(e.offsetX * scaleX);
-            const y = Math.round(e.offsetY * scaleY);
-            
-            sendMessage({{type: 'mousedown', x, y, button: 1}});
-        }});
+// ------------------------------------------------------------------ mouse
+const BUTTONS = [1, 2, 3, 8, 9];  // DOM button index -> X button
+function pointerPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const sx = canvas.width / (r.width || 1), sy = canvas.height / (r.height || 1);
+    return {
+        x: Math.max(0, Math.min(canvas.width - 1, Math.round((e.clientX - r.left) * sx))),
+        y: Math.max(0, Math.min(canvas.height - 1, Math.round((e.clientY - r.top) * sy))),
+    };
+}
+function mods(e) {
+    const m = [];
+    if (e.ctrlKey || (isMac && e.metaKey)) m.push('ctrl');
+    if (e.shiftKey) m.push('shift');
+    if (e.altKey) m.push('alt');
+    if (e.metaKey && !isMac) m.push('meta');
+    return m;
+}
 
-        canvas.addEventListener('mouseup', (e) => {{
-            const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.width / rect.width;
-            const scaleY = e.target.height / rect.height;
-            const x = Math.round(e.offsetX * scaleX);
-            const y = Math.round(e.offsetY * scaleY);
-            sendMessage({{type: 'mouseup', x, y, button: 1}});
-        }});
-        
-        canvas.addEventListener('contextmenu', (e) => {{
-            e.preventDefault();
-            const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.width / rect.width;
-            const scaleY = e.target.height / rect.height;
-            const x = Math.round(e.offsetX * scaleX);
-            const y = Math.round(e.offsetY * scaleY);
+let pendingMove = null, moveScheduled = false;
+function flushMove() {
+    moveScheduled = false;
+    if (pendingMove) { send({ type: 'mousemove', ...pendingMove }); pendingMove = null; }
+}
+canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch' && touchScroll.active) return;
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    pendingMove = pointerPos(evs.length ? evs[evs.length - 1] : e);
+    if (!moveScheduled) { moveScheduled = true; requestAnimationFrame(flushMove); }
+});
+const buttonsDown = new Set();
+canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch' && touchScroll.active) return;
+    e.preventDefault();
+    focusInput();
+    toParent('webx11:focus');
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    const p = pointerPos(e);
+    pendingMove = null;
+    const button = BUTTONS[e.button] || 1;
+    buttonsDown.add(button);
+    send({ type: 'mousedown', ...p, button, mods: mods(e) });
+});
+function pointerUp(e) {
+    const button = BUTTONS[e.button] || 1;
+    if (!buttonsDown.has(button)) return;
+    buttonsDown.delete(button);
+    if (pendingMove) flushMove();
+    send({ type: 'mouseup', ...pointerPos(e), button });
+}
+canvas.addEventListener('pointerup', pointerUp);
+canvas.addEventListener('pointercancel', pointerUp);
+canvas.addEventListener('lostpointercapture', (e) => {
+    // capture lost without a pointerup (e.g. alert, focus change): release all buttons
+    for (const b of [...buttonsDown]) { buttonsDown.delete(b); send({ type: 'mouseup', ...pointerPos(e), button: b }); }
+});
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('auxclick', (e) => e.preventDefault());
 
-            sendMessage({{type: 'mousedown', x, y, button: 3}});
-        }});
+// wheel: accumulate pixel deltas into X wheel clicks (trackpads send many tiny deltas)
+let wheel = { x: 0, y: 0, pos: null, scheduled: false };
+const WHEEL_STEP = 100;
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
+    wheel.y += e.deltaY * k; wheel.x += e.deltaX * k; wheel.pos = pointerPos(e);
+    if (!wheel.scheduled) {
+        wheel.scheduled = true;
+        requestAnimationFrame(() => {
+            wheel.scheduled = false;
+            const dy = Math.trunc(wheel.y / WHEEL_STEP), dx = Math.trunc(wheel.x / WHEEL_STEP);
+            if (dy || dx) {
+                wheel.y -= dy * WHEEL_STEP; wheel.x -= dx * WHEEL_STEP;
+                send({ type: 'scroll', ...wheel.pos, dx, dy });
+            }
+        });
+    }
+}, { passive: false });
 
-        // OPTIMIZATION: More aggressive debouncing for mouse move
-        const onMouseMove = debounce((e) => {{
-            const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.width / rect.width;
-            const scaleY = e.target.height / rect.height;
-            const x = Math.round(e.offsetX * scaleX);
-            const y = Math.round(e.offsetY * scaleY);
-            sendMessage({{type: 'mousemove', x, y}});
-        }}, 16); // ~60fps max for mouse moves
+// touch: two-finger scroll, double tap opens the on-screen keyboard
+const touchScroll = { active: false, lastY: 0, acc: 0, lastTap: 0 };
+canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+        touchScroll.active = true;
+        touchScroll.lastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        touchScroll.acc = 0;
+        for (const b of [...buttonsDown]) { buttonsDown.delete(b); send({ type: 'mouseup', ...pointerPos(e.touches[0]), button: b }); }
+        e.preventDefault();
+    } else if (e.touches.length === 1) {
+        const now = Date.now();
+        if (now - touchScroll.lastTap < 300) { ime.focus(); }
+        touchScroll.lastTap = now;
+    }
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+    if (!touchScroll.active || e.touches.length !== 2) return;
+    e.preventDefault();
+    const y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    touchScroll.acc += (touchScroll.lastY - y);
+    touchScroll.lastY = y;
+    const clicks = Math.trunc(touchScroll.acc / 30);
+    if (clicks) {
+        touchScroll.acc -= clicks * 30;
+        const c = { clientX: (e.touches[0].clientX + e.touches[1].clientX) / 2, clientY: y };
+        send({ type: 'scroll', ...pointerPos(c), dx: 0, dy: clicks });
+    }
+}, { passive: false });
+canvas.addEventListener('touchend', (e) => { if (e.touches.length < 2) touchScroll.active = false; });
 
-        canvas.addEventListener('mousemove', onMouseMove);
-        
-        canvas.addEventListener('wheel', (e) => {{
-            const rect = e.target.getBoundingClientRect();
-            const scaleX = e.target.width / rect.width;
-            const scaleY = e.target.height / rect.height;
-            const x = Math.round(e.offsetX * scaleX);
-            const y = Math.round(e.offsetY * scaleY);
-            
-            sendMessage({{type: 'scroll', x, y, deltaY: e.deltaY}});
-            e.preventDefault();
-        }}, {{ passive: false }});
-        
-        // Touch event handlers for gestures
-        canvas.addEventListener('touchstart', handleTouchStart, {{ passive: false }});
-        canvas.addEventListener('touchmove', handleTouchMove, {{ passive: false }});
-        canvas.addEventListener('touchend', handleTouchEnd, {{ passive: false }});
-        canvas.addEventListener('touchcancel', handleTouchEnd, {{ passive: false }});
-        
-        function handleTouchStart(e) {{
-            const touches = e.touches;
-            const rect = e.target.getBoundingClientRect();
-            const edgeThreshold = 30; // pixels from right edge
-            
-            // Update touch tracking
-            for (let touch of touches) {{
-                touchState.touches.set(touch.identifier, {{
-                    x: touch.clientX,
-                    y: touch.clientY,
-                    startX: touch.clientX,
-                    startY: touch.clientY
-                }});
-            }}
-            
-            // Check for double-tap (mobile keyboard activation)
-            if (isMobile && touches.length === 1) {{
-                const now = Date.now();
-                const timeSinceLastTap = now - touchState.lastTapTime;
-                
-                if (timeSinceLastTap < 300) {{
-                    // Double tap detected
-                    touchState.tapCount = 2;
-                    hiddenInput.focus();
-                    console.log('Double-tap: keyboard activated');
-                    e.preventDefault();
-                    return;
-                }} else {{
-                    touchState.tapCount = 1;
-                }}
-                touchState.lastTapTime = now;
-            }}
-            
-            // Check for edge scroll (single finger on right edge)
-            if (touches.length === 1) {{
-                const touch = touches[0];
-                const distanceFromRightEdge = rect.right - touch.clientX;
-                
-                if (distanceFromRightEdge <= edgeThreshold) {{
-                    touchState.edgeScrollActive = true;
-                    touchState.edgeScrollStartY = touch.clientY;
-                    document.getElementById('edgeScrollIndicator').classList.add('active');
-                    e.preventDefault();
-                    return;
-                }}
-            }}
-            
-            // Check for two-finger scroll
-            if (touches.length === 2) {{
-                touchState.twoFingerScrollActive = true;
-                touchState.lastTwoFingerY = (touches[0].clientY + touches[1].clientY) / 2;
-                e.preventDefault();
-                return;
-            }}
-            
-            // Regular mouse down for single touch (not on edge)
-            if (touches.length === 1 && !touchState.edgeScrollActive) {{
-                const touch = touches[0];
-                const scaleX = e.target.width / rect.width;
-                const scaleY = e.target.height / rect.height;
-                const x = Math.round((touch.clientX - rect.left) * scaleX);
-                const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
-                sendMessage({{type: 'mousedown', x, y, button: 1}});
-            }}
-        }}
-        
-        function handleTouchMove(e) {{
-            const touches = e.touches;
-            const rect = e.target.getBoundingClientRect();
-            
-            // Handle edge scroll
-            if (touchState.edgeScrollActive && touches.length === 1) {{
-                const touch = touches[0];
-                const deltaY = touch.clientY - touchState.edgeScrollStartY;
-                const scaleX = e.target.width / rect.width;
-                const scaleY = e.target.height / rect.height;
-                const x = Math.round((touch.clientX - rect.left) * scaleX);
-                const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
-                // Send scroll message (converting touch delta to wheel delta)
-                sendMessage({{type: 'scroll', x, y, deltaY: -deltaY * 2}});
-                touchState.edgeScrollStartY = touch.clientY;
-                e.preventDefault();
-                return;
-            }}
-            
-            // Handle two-finger scroll
-            if (touchState.twoFingerScrollActive && touches.length === 2) {{
-                const currentY = (touches[0].clientY + touches[1].clientY) / 2;
-                const deltaY = currentY - touchState.lastTwoFingerY;
-                
-                const scaleX = e.target.width / rect.width;
-                const scaleY = e.target.height / rect.height;
-                const centerX = (touches[0].clientX + touches[1].clientX) / 2;
-                const centerY = (touches[0].clientY + touches[1].clientY) / 2;
-                const x = Math.round((centerX - rect.left) * scaleX);
-                const y = Math.round((centerY - rect.top) * scaleY);
-                
-                // Send scroll message (converting touch delta to wheel delta)
-                sendMessage({{type: 'scroll', x, y, deltaY: -deltaY * 2}});
-                touchState.lastTwoFingerY = currentY;
-                e.preventDefault();
-                return;
-            }}
-            
-            // Regular mouse move for single touch
-            if (touches.length === 1 && !touchState.edgeScrollActive && !touchState.twoFingerScrollActive) {{
-                const touch = touches[0];
-                const scaleX = e.target.width / rect.width;
-                const scaleY = e.target.height / rect.height;
-                const x = Math.round((touch.clientX - rect.left) * scaleX);
-                const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
-                sendMessage({{type: 'mousemove', x, y}});
-            }}
-        }}
-        
-        function handleTouchEnd(e) {{
-            const touches = e.touches;
-            const rect = e.target.getBoundingClientRect();
-            
-            // Clean up edge scroll
-            if (touchState.edgeScrollActive) {{
-                touchState.edgeScrollActive = false;
-                document.getElementById('edgeScrollIndicator').classList.remove('active');
-            }}
-            
-            // Clean up two-finger scroll
-            if (touchState.twoFingerScrollActive && touches.length < 2) {{
-                touchState.twoFingerScrollActive = false;
-            }}
-            
-            // Update touch tracking
-            const changedTouches = e.changedTouches;
-            for (let touch of changedTouches) {{
-                touchState.touches.delete(touch.identifier);
-            }}
-            
-            // Send mouse up if all touches are gone
-            if (touches.length === 0 && changedTouches.length > 0) {{
-                const touch = changedTouches[0];
-                const scaleX = e.target.width / rect.width;
-                const scaleY = e.target.height / rect.height;
-                const x = Math.round((touch.clientX - rect.left) * scaleX);
-                const y = Math.round((touch.clientY - rect.top) * scaleY);
-                
-                sendMessage({{type: 'mouseup', x, y, button: 1}});
-            }}
-        }}
-        
-        // Only send special keys via key events, regular text via input event
-        document.addEventListener('keydown', (e) => {{
-            if (e.key === 'F3') return; // Already handled above
-            
-            const key = getKeyFromEvent(e);
-            
-            // Only send special keys (not regular text)
-            if (key && !isRegularTextKey(e)) {{
-                sendMessage({{type: 'keydown', key}});
-                e.preventDefault();
-            }}
-        }});
-        
-        document.addEventListener('keyup', (e) => {{
-            if (e.key === 'F3') return;
-            
-            const key = getKeyFromEvent(e);
-            
-            // Only send special keys (not regular text)
-            if (key && !isRegularTextKey(e)) {{
-                sendMessage({{type: 'keyup', key}});
-                e.preventDefault();
-            }}
-        }});
-        
-        function isRegularTextKey(e) {{
-            // Regular text keys should be handled by the input event
-            // Special keys should be sent as key events
-            return e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
-        }}
-        
-        function getKeyFromEvent(e) {{
-            const specialKeys = {{
-                'Escape': 'escape', 'Enter': 'enter', 'Tab': 'tab', 'Backspace': 'backspace',
-                'Delete': 'delete', 'ArrowLeft': 'left', 'ArrowRight': 'right', 
-                'ArrowUp': 'up', 'ArrowDown': 'down', 'Shift': 'shift', 'Control': 'control',
-                'Alt': 'alt', 'Meta': 'super', ' ': 'space'
-            }};
-            
-            if (specialKeys[e.key]) return specialKeys[e.key];
-            if (e.key.match(/^F[1-9]$|^F1[0-2]$/)) return e.key.toLowerCase();
-            if (e.key.length === 1) return e.key;
-            return null;
-        }}
-        
-        // Start connection
-        setup()
-        window.setupInterval = setInterval(() => {{
-            serverSync()
-        }}, 2000)
+// --------------------------------------------------------------- keyboard
+//
+// No key is ever "held" on the X side. Shortcuts and special keys are sent
+// as one atomic message ({type:'key', key, mods}); the server presses the
+// modifiers, the key, and releases everything. Characters go through the
+// hidden textarea so dead keys, AltGr/Option layers and IMEs produce the
+// exact character, which the server types regardless of the X layout.
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock', 'NumLock',
+    'ScrollLock', 'OS', 'Hyper', 'Super', 'Fn', 'FnLock', 'Symbol', 'SymbolLock']);
+const IGNORED_KEYS = new Set(['Dead', 'Unidentified', 'Process', 'Compose']);
 
-    </script>
+function focusInput() {
+    if (document.activeElement !== ime) ime.focus({ preventScroll: true });
+}
+
+function isAltGr(e, printable) {
+    if (e.getModifierState && e.getModifierState('AltGraph')) return true;
+    // Windows reports AltGr as Ctrl+Alt; a symbol produced that way is text
+    return !isMac && printable && e.ctrlKey && e.altKey && !/^[a-z0-9]$/i.test(e.key);
+}
+
+function comboKey(e) {
+    const k = e.key;
+    if (/^[a-zA-Z]$/.test(k)) return k.toLowerCase();
+    if (/^Digit[0-9]$/.test(e.code)) return e.code.slice(5);
+    if (k.length === 1 && k.charCodeAt(0) < 127) return k;
+    if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase();  // non-latin layouts
+    return k;
+}
+
+function isPasteCombo(e, key) {
+    return (key === 'v' && (e.ctrlKey || (isMac && e.metaKey))) || (key === 'Insert' && e.shiftKey && !e.ctrlKey);
+}
+
+let pendingPaste = null;
+
+function onKeyDown(e) {
+    if (e.isComposing || e.keyCode === 229) return;
+    const k = e.key;
+    if (MODIFIER_KEYS.has(k) || IGNORED_KEYS.has(k)) return;
+
+    // local hotkey: Ctrl+Alt+Shift+S toggles the stats overlay
+    if (e.ctrlKey && e.altKey && e.shiftKey && e.code === 'KeyS') {
+        hud.classList.toggle('show'); e.preventDefault(); return;
+    }
+
+    const printable = [...k].length === 1;
+    const textLike = printable && (
+        (!e.ctrlKey && !e.metaKey && !e.altKey) ||
+        isAltGr(e, printable) ||
+        (isMac && e.altKey && !e.ctrlKey && !e.metaKey)   // Option layer on macOS
+    );
+    if (textLike) { flushClipboardWrite(); return; }  // the textarea 'input' event sends it
+
+    const key = printable ? comboKey(e) : k;
+    const m = mods(e);
+    flushClipboardWrite();
+
+    if (isPasteCombo(e, key)) {
+        // let the browser fire 'paste' on the textarea so we get the local clipboard
+        clearTimeout(pendingPaste && pendingPaste.timer);
+        pendingPaste = { key, mods: m, timer: setTimeout(() => {
+            if (pendingPaste) { send({ type: 'key', key: pendingPaste.key, mods: pendingPaste.mods }); pendingPaste = null; }
+        }, 150) };
+        return;
+    }
+
+    e.preventDefault();
+    send({ type: 'key', key, mods: m });
+}
+
+ime.addEventListener('keydown', onKeyDown);
+document.addEventListener('keydown', (e) => { if (e.target !== ime) { focusInput(); onKeyDown(e); } });
+
+ime.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData && e.clipboardData.getData('text/plain')) || '';
+    const combo = pendingPaste || { key: 'v', mods: ['ctrl'] };
+    if (pendingPaste) { clearTimeout(pendingPaste.timer); pendingPaste = null; }
+    if (text) send({ type: 'paste', text, key: combo.key, mods: combo.mods });
+    else send({ type: 'key', key: combo.key, mods: combo.mods });
+});
+
+ime.addEventListener('input', (e) => {
+    const t = e.inputType || '';
+    if (t === 'insertCompositionText' || e.isComposing) return;
+    if ((t === 'insertText' || t === 'insertReplacementText' || t === '') && e.data) {
+        send({ type: 'text_input', text: e.data });
+    } else if (t === 'insertLineBreak' || t === 'insertParagraph') {
+        send({ type: 'key', key: 'Enter', mods: [] });
+    } else if (t === 'deleteContentBackward') {
+        send({ type: 'key', key: 'Backspace', mods: [] });
+    } else if (t === 'deleteContentForward') {
+        send({ type: 'key', key: 'Delete', mods: [] });
+    } else if (!t && ime.value) {
+        send({ type: 'text_input', text: ime.value });
+    }
+    ime.value = '';
+});
+ime.addEventListener('compositionend', (e) => {
+    if (e.data) send({ type: 'text_input', text: e.data });
+    ime.value = '';
+});
+
+// Safety net: whenever this frame stops receiving keyboard/mouse events,
+// tell the server to release anything that might still be down.
+function releaseAll() {
+    buttonsDown.clear();
+    send({ type: 'release_all' });
+}
+window.addEventListener('blur', releaseAll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+window.addEventListener('pagehide', releaseAll);
+window.addEventListener('focus', () => focusInput());
+
+// ------------------------------------------------------------- clipboard
+let clipboardPending = null;
+async function writeClipboard(text) {
+    clipboardPending = text;
+    await flushClipboardWrite();
+}
+async function flushClipboardWrite() {
+    if (clipboardPending === null || !navigator.clipboard) return;
+    const text = clipboardPending;
+    try {
+        await navigator.clipboard.writeText(text);
+        if (clipboardPending === text) clipboardPending = null;
+        toParent('webx11:clipboard', { length: text.length });
+    } catch (e) {
+        // no user activation or focus yet: retried on the next key/click
+    }
+}
+window.addEventListener('pointerdown', flushClipboardWrite, true);
+
+// -------------------------------------------------------- parent messages
+window.addEventListener('message', (e) => {
+    const d = e.data || {};
+    if (d.type === 'webx11:focus') { focusInput(); flushClipboardWrite(); }
+    else if (d.type === 'webx11:release_all') releaseAll();
+    else if (d.type === 'webx11:hud') hud.classList.toggle('show', d.show === undefined ? !hud.classList.contains('show') : !!d.show);
+    else if (d.type === 'webx11:refresh') send({ type: 'refresh' });
+    else if (d.type === 'webx11:quality') send({ type: 'quality', value: d.value });
+});
+
+// ------------------------------------------------------------------ start
+showOverlay('Connecting…');
+(async () => {
+    try {
+        const r = await fetch(new URL('../../settings.json', location.href), { cache: 'no-store' });
+        const j = await r.json();
+        settings = Object.assign(settings, j.settings || j);
+    } catch (e) { /* settings also arrive over the socket */ }
+    connectWebSocket();
+})();
+focusInput();
+})();
+</script>
 </body>
 </html>

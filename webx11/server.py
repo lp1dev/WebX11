@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main X11 Web Display Server with HTTP API and WebTransport
+Main X11 Web Display Server with an HTTP API, streaming over WebSockets.
 """
 
 import sys
@@ -37,19 +37,15 @@ def handler_factory(display_manager):
 async def main_async():
     # Configuration
     HTTP_PORT = 8080
-    WEBTRANSPORT_PORT = 4433
     WEBSOCKET_PORT = 8081
-    
+
     print("Starting X11 Web Display Server with HTTP API...")
     print("=" * 50)
-    
+
     # Parsing settings
     settings = SettingsManager()
 
     HOST = settings.host
-    WEBTRANSPORT_HOST = settings.webtransport_host
-    if settings.transport == 'webtransport':
-        from webx11 import webtransport
 
     # Check if Xvfb is available
     try:
@@ -64,10 +60,6 @@ async def main_async():
     
     websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
 
-    webtransport_server = None
-    if settings.transport == 'webtransport':
-        webtransport_server = await webtransport.run_webtransport_server(display_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
-
     # Start window broadcast
     websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2))
 
@@ -77,14 +69,11 @@ async def main_async():
     print(f"✅ X11 Web Display Server with HTTP API started!")
     print(f"🌐 HTTP interface: http://{HOST}:{HTTP_PORT}")
     print(f"🔌 WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
-    if webtransport_server:
-        print(f"🚀 WebTransport server: https://{WEBTRANSPORT_HOST}:{WEBTRANSPORT_PORT}")
     print("\nAvailable HTTP Routes:")
     print("  GET  /              - Main interface")
-    print("  GET  /applications  - List available applications")
-    print("  POST /start         - Start an application")
-    print("  GET  /windows       - List running windows") 
-    print("  GET  /windows/{id}  - Access specific window")
+    print("  GET  /displays      - List running displays")
+    print("  POST /display       - Create a display")
+    print("  GET  /display/{id}  - Access a specific display")
     print("\nPress Ctrl+C to stop the server")
     print("=" * 50)
     
@@ -115,7 +104,6 @@ async def main_async():
             process.terminate()
         websocket_server.close()
         await websocket_server.wait_closed()
-        # TODO: Make sure that the webtransport server is closed too
         http_server.shutdown()
         display_manager.stop_all()
 
