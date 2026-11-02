@@ -5,10 +5,10 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="webx11",
-    version="0.1.0",
+    version="0.2.0",
     author="lp1",
     author_email="webx11@lp1.eu",
-    description="Stream GNU/Linux GUI applications to web browsers via WebTransport/WebSocket",
+    description="Stream GNU/Linux GUI applications to web browsers over WebSockets",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/lp1dev/WebX11",
@@ -19,7 +19,7 @@ setup(
         "Intended Audience :: System Administrators",
         "Topic :: System :: Systems Administration",
         "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
@@ -33,7 +33,6 @@ setup(
         "Pillow>=9.0.0",
         "python-xlib>=0.31",
         "websockets>=10.0",
-        "aioquic>=0.9.0"
     ],
     extras_require={
         "dev": [
@@ -60,5 +59,5 @@ setup(
         "Source": "https://github.com/lp1dev/WebX11",
         "Documentation": "https://github.com/lp1dev/WebX11",
     },
-    keywords="x11 xvfb webtransport websocket streaming remote-desktop",
+    keywords="x11 xvfb websocket streaming remote-desktop gui browser",
 )

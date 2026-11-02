@@ -1,27 +1,13 @@
 import sys
-import io
 import time
-import struct
 
-from PIL import Image
 from webx11.settings import SettingsManager
-
-try:
-    import numpy as np
-except ImportError:
-    print("Warning: numpy not available. Install with: pip3 install numpy")
-    sys.exit(1)
-
-try:
-    import mss
-except ImportError:
-    print("Warning: mss not available. Install with: pip3 install mss")
-    sys.exit(1)
+from webx11.capture import encode_full_frame
 
 try:
     import Xlib
     import Xlib.display
-    import Xlib.threaded
+    import Xlib.threaded  # noqa: F401  (makes Display objects thread safe)
     from Xlib import X, XK
     from Xlib.ext import xtest
 except ImportError:
@@ -29,337 +15,268 @@ except ImportError:
     sys.exit(1)
 
 
-# --- Tile frame wire format (shared with partials/display.html) -------------
-#
-# Frame header (big-endian, 20 bytes):
-#   B  version (=1)
-#   B  flags          (bit0 = keyframe: full repaint of the whole frame)
-#   H  frame_id
-#   H  frame_width
-#   H  frame_height
-#   H  tile_count
-#   H  reserved
-#   Q  timestamp_ms
-#
-# Then, repeated tile_count times (12-byte header + payload):
-#   H  x
-#   H  y
-#   H  w
-#   H  h
-#   I  data_len
-#   <data_len bytes>   encoded image in settings.image_format
-FRAME_HDR = struct.Struct('>BBHHHHHQ')
-TILE_HDR = struct.Struct('>HHHHI')
-PROTO_VERSION = 1
-FLAG_KEYFRAME = 0x01
-
-# When more than this fraction of tiles changed, send one full-frame encode
-# instead of many small ones (fewer encode calls, real cross-frame compression,
-# a single createImageBitmap on the client). Localized edits stay below this
-# and use tight dirty regions.
-FULLFRAME_FRACTION = 0.6
-
-
 class WindowScreenCapture:
+    """Legacy full-frame capture (kept for API compatibility)."""
+
     def __init__(self, window_display):
         self.window_display = window_display
         self.settings = SettingsManager()
-        self.tile_size = getattr(self.settings, 'tile_size', 256)
-        self.display_name = window_display.display_name
+        self.last_frame = None
 
-        # mss connections are NOT thread-safe and have X11 thread affinity, so
-        # create it lazily inside whatever worker thread first calls a capture
-        # method, and recreate if the thread ever changes.
-        self._sct = None
-        self._sct_thread = None
-
-        self.prev32 = None          # previous frame as (h, w) uint32, OWN array
-        self.frame_id = 0
-        self._buf = io.BytesIO()    # reused encode buffer
-
-    def _ensure_sct(self):
-        import threading
-        tid = threading.get_ident()
-        if self._sct is None or self._sct_thread != tid:
-            if self._sct is not None:
-                try:
-                    self._sct.close()
-                except Exception:
-                    pass
-            self._sct = mss.mss(display=self.display_name)
-            self._sct_thread = tid
-
-    def _clamp(self, x, y, width, height):
-        """Keep the requested region inside the real virtual screen so mss can
-        never be asked for an out-of-bounds or zero-size grab."""
-        mon = self._sct.monitors[0]  # union of all monitors = the Xvfb screen
-        sw, sh = int(mon['width']), int(mon['height'])
-        x = max(0, int(x))
-        y = max(0, int(y))
-        width = max(1, min(int(width), sw - x))
-        height = max(1, min(int(height), sh - y))
-        return x, y, width, height
-
-    def _encode(self, image):
-        self._buf.seek(0)
-        self._buf.truncate()
-        fmt = self.settings.image_format.lower()
-        if fmt == 'png':
-            image.save(self._buf, format='PNG', optimize=False, compress_level=1)
-        elif fmt == 'webp':
-            # method=0 is libwebp's fastest encoder (default is 4, much slower)
-            image.save(self._buf, format='WEBP',
-                       quality=self.settings.image_quality, method=0)
-        else:
-            image.save(self._buf, format='JPEG',
-                       quality=self.settings.image_quality,
-                       optimize=False, subsampling=2)
-        return self._buf.getvalue()
-
-    def _pack(self, width, height, tiles, keyframe):
-        self.frame_id = (self.frame_id + 1) % 65536
-        flags = FLAG_KEYFRAME if keyframe else 0
-        ts_ms = int(time.time() * 1000) & 0xFFFFFFFFFFFFFFFF
-        parts = [FRAME_HDR.pack(PROTO_VERSION, flags, self.frame_id,
-                                width, height, len(tiles), 0, ts_ms)]
-        for (x, y, w, h, data) in tiles:
-            parts.append(TILE_HDR.pack(x, y, w, h, len(data)))
-            parts.append(data)
-        return b''.join(parts)
-
-    def _encode_full(self, raw, width, height):
-        """Encode the whole grab as a single full-frame tile."""
-        full = Image.frombytes("RGB", (width, height), raw.bgra, "raw", "BGRX")
-        return [(0, 0, width, height, self._encode(full))]
-
-    def capture_keyframe(self, x=0, y=0, height=0, width=0):
-        """Full-frame keyframe that does NOT touch the diff state. Used to seed
-        a freshly connected client without disturbing the shared diff baseline
-        that other clients of the same display rely on."""
-        try:
-            self._ensure_sct()
-            x, y, width, height = self._clamp(x, y, width, height)
-            raw = self._sct.grab({"left": x, "top": y, "width": width, "height": height})
-            tiles = self._encode_full(raw, width, height)
-            return self._pack(width, height, tiles, keyframe=True)
-        except Exception as e:
-            print(f"Window keyframe error: {e}")
+    def capture_window(self, x=0, y=0, height=0, width=0, quality=None, dpi=None, force=False):
+        image = self.window_display.grab_image()
+        if image is None:
             return None
-
-    def capture_window(self, x=0, y=0, height=0, width=0,
-                       quality=30, dpi=200, force=False):
-        """Capture and return a serialized tile frame, or None if nothing
-        changed. Runs inside the display's single-worker capture executor."""
-        try:
-            self._ensure_sct()
-            x, y, width, height = self._clamp(x, y, width, height)
-
-            raw = self._sct.grab({"left": x, "top": y, "width": width, "height": height})
-            arr32 = np.frombuffer(raw.bgra, dtype=np.uint32).reshape(height, width)
-
-            # First frame or geometry change -> full keyframe for everyone.
-            if self.prev32 is None or self.prev32.shape != arr32.shape:
-                force = True
-
-            if force:
-                tiles = self._encode_full(raw, width, height)
-                self.prev32 = arr32.copy()
-                return self._pack(width, height, tiles, keyframe=True)
-
-            # One C-level pass: which pixels differ from the previous frame.
-            changed = arr32 != self.prev32
-            if not changed.any():
-                return None
-
-            ts = self.tile_size
-            cols = (width + ts - 1) // ts
-            rows = (height + ts - 1) // ts
-            total = cols * rows
-
-            # Which tiles contain any change.
-            dirty = []
-            for r in range(rows):
-                ty = r * ts
-                th = min(ts, height - ty)
-                for c in range(cols):
-                    tx = c * ts
-                    tw = min(ts, width - tx)
-                    if changed[ty:ty + th, tx:tx + tw].any():
-                        dirty.append((tx, ty, tw, th))
-
-            if not dirty:
-                return None
-
-            # Lots changed -> one full-frame encode beats many small ones.
-            if len(dirty) >= total * FULLFRAME_FRACTION:
-                tiles = self._encode_full(raw, width, height)
-                self.prev32 = arr32.copy()
-                return self._pack(width, height, tiles, keyframe=True)
-
-            # Localized change: crop+encode only dirty tiles straight from the
-            # raw buffer (no full-frame RGB allocation), and update prev only
-            # where it actually changed (cheap memcpy of a few tiles).
-            arr8 = np.frombuffer(raw.bgra, dtype=np.uint8).reshape(height, width, 4)
-            tiles = []
-            for (tx, ty, tw, th) in dirty:
-                sub = arr8[ty:ty + th, tx:tx + tw, :3][:, :, ::-1]  # BGR -> RGB
-                img = Image.fromarray(np.ascontiguousarray(sub), "RGB")
-                tiles.append((tx, ty, tw, th, self._encode(img)))
-                self.prev32[ty:ty + th, tx:tx + tw] = arr32[ty:ty + th, tx:tx + tw]
-
-            return self._pack(width, height, tiles, keyframe=False)
-
-        except Exception as e:
-            print(f"Window capture error: {e}")
-            import traceback
-            traceback.print_exc()
+        frame = encode_full_frame(image, self.settings.image_format, self.settings.image_quality)
+        if not force and frame == self.last_frame:
             return None
+        self.last_frame = frame
+        return frame
 
-    def close(self):
-        if self._sct is not None:
-            try:
-                self._sct.close()
-            except Exception:
-                pass
-            self._sct = None
+
+# Browser KeyboardEvent.key values -> X keysym names
+DOM_KEY_TO_KEYSYM = {
+    'Enter': 'Return', 'Tab': 'Tab', 'Backspace': 'BackSpace', 'Escape': 'Escape',
+    'Delete': 'Delete', 'Insert': 'Insert', 'Home': 'Home', 'End': 'End',
+    'PageUp': 'Prior', 'PageDown': 'Next',
+    'ArrowLeft': 'Left', 'ArrowRight': 'Right', 'ArrowUp': 'Up', 'ArrowDown': 'Down',
+    'ContextMenu': 'Menu', 'PrintScreen': 'Print', 'Pause': 'Pause', 'ScrollLock': 'Scroll_Lock',
+    ' ': 'space', 'Spacebar': 'space',
+    # legacy WebX11 names
+    'escape': 'Escape', 'esc': 'Escape', 'enter': 'Return', 'return': 'Return', 'tab': 'Tab',
+    'backspace': 'BackSpace', 'delete': 'Delete', 'insert': 'Insert', 'home': 'Home', 'end': 'End',
+    'pageup': 'Prior', 'pagedown': 'Next', 'left': 'Left', 'right': 'Right', 'up': 'Up',
+    'down': 'Down', 'space': 'space',
+}
+for _i in range(1, 25):
+    DOM_KEY_TO_KEYSYM[f'F{_i}'] = f'F{_i}'
+    DOM_KEY_TO_KEYSYM[f'f{_i}'] = f'F{_i}'
+
+MODIFIER_KEYSYMS = {
+    'ctrl': 'Control_L', 'control': 'Control_L',
+    'shift': 'Shift_L',
+    'alt': 'Alt_L',
+    'meta': 'Super_L', 'super': 'Super_L',
+}
+
+SCROLL_BUTTONS = {'up': 4, 'down': 5, 'left': 6, 'right': 7}
+
+
+def char_to_keysym(ch):
+    if ch == '\n' or ch == '\r':
+        return XK.string_to_keysym('Return')
+    if ch == '\t':
+        return XK.string_to_keysym('Tab')
+    cp = ord(ch)
+    if 0x20 <= cp <= 0x7e or 0xa0 <= cp <= 0xff:
+        return cp  # Latin-1 keysyms equal their code point
+    return 0x01000000 + cp  # Unicode keysym
 
 
 class WindowInputHandler:
+    """Injects input into one Xvfb display through XTEST.
+
+    Design rules that prevent stuck keys:
+      * modifiers are never left pressed between messages: shortcuts arrive
+        as one atomic message (key + modifier list) and are pressed/released
+        together;
+      * text is typed as exact characters, the handler presses Shift itself
+        when the character needs it and remaps a spare keycode for characters
+        that are not on the X keymap (AltGr / Option characters, accents...);
+      * release_all() releases every key and button the X server reports as
+        down; it runs on blur, on disconnect and on demand.
+    """
+
     def __init__(self, window_display):
         self.window_display = window_display
         self.display = window_display.get_display()
         if not self.display:
             raise Exception("No X11 display available")
         self.root = self.display.screen().root
+        self.buttons_down = set()
+        self._scratch_keycodes = []
+        self._remapped = {}  # keysym -> keycode
+        self._remap_next = 0
+        self._shift_keycode = self.display.keysym_to_keycode(XK.string_to_keysym('Shift_L'))
+        self._init_scratch_keycodes()
 
-        # Key mapping
-        self.key_map = self._create_key_map()
-
-    def _create_key_map(self):
-        """Create mapping from common key names to X11 keycodes"""
-        key_map = {}
-
-        # Alphabet keys (a-z)
-        for i, char in enumerate("abcdefghijklmnopqrstuvwxyz"):
-            key_map[char] = 97 + i
-            key_map[char.upper()] = 65 + i
-
-        # Number keys (0-9)
-        for i in range(10):
-            key_map[str(i)] = 0x0030 + i
-
-        # Special characters
-        key_map.update({
-            ' ': 0x0020,  # Space
-            '\n': 0xff8d,  # Enter
-            '\t': 0xff09,  # Tab
-            '`': 0x0ad0, '~': 0x007e,
-            '!': 0x0021, '@': 0x0040, '#': 0x0af5, '$': 0x0024, '%': 0x0025, '^': 15, '&': 0x0026, '*': 0x002a,
-            '(': 0x0028, ')': 0x0029, '-': 0x002d, '_': 0x005f, '=': 0x003d, '+': 0x002b,
-            '[': 0x005b, '{': 0x007b, ']': 0x005d, '}': 0x007d, '\\': 0x005c, '|': 0x007c,
-            ';': 0x003b, ':': 0x003a, "'": 0x0027, '"': 48,
-            ',': 0x002c, '<': 0x003c, '.': 0x002e, '>': 0x003e, '/': 0x002f, '?': 0x003f, '¨': 0x0afe, '´': 0x0afd
-        })
-
-        # Function keys
-        for i in range(1, 13):
-            key_map[f'f{i}'] = 0xffbe + i
-            key_map[f'F{i}'] = 0xffbe + i
-
-        # Control keys
-        key_map.update({
-            'escape': 0xff1b, 'esc': 0xff1b,
-            'backspace': 0xff08,
-            'enter': 0xff8d, 'return': 0xff0d,
-            'tab': 0xff09,
-            'capslock': 0xffe5,
-            'shift': 0xffe1, 'shift_l': 0xffe1, 'shift_r': 0xffe2,
-            'control': 0xffe3, 'ctrl': 0xffe3, 'control_l': 0xffe3, 'control_r': 0xffe4,
-            'alt': 0xffe9, 'alt_l': 0xffe9, 'alt_r': 0xffea,
-            'super': 0xffe7, 'super_l': 0xffe7, 'super_r': 0xffe8, 'windows': 0xffe7,
-            'space': 0x0020,
-            'left': 0xff51, 'right': 0xff53, 'up': 0xff52, 'down': 0xff54,
-            'insert': 0xff63, 'delete': 0xff9f, 'home': 0xff50, 'end': 0xff57,
-            'pageup': 0xff55, 'pagedown': 0xff56,
-            'numlock': 0xff7f, 'scrolllock': 0xff14,
-        })
-
-        return key_map
-
-    def send_mouse_event(self, x, y, button=1, pressed=True):
-        """Send mouse event to this window's display"""
+    # ----------------------------------------------------------------- utils
+    def _init_scratch_keycodes(self):
         try:
-            event_type = X.ButtonPress if pressed else X.ButtonRelease
-            self.root.warp_pointer(x + self.window_display.x, y + self.window_display.y)
-            self.display.sync()
-            xtest.fake_input(self.display, event_type, button)
-            self.display.sync()
-            return True
+            first = self.display.display.info.min_keycode
+            last = self.display.display.info.max_keycode
+            mapping = self.display.get_keyboard_mapping(first, last - first + 1)
+            for i, syms in enumerate(mapping):
+                if all(s == X.NoSymbol for s in syms):
+                    self._scratch_keycodes.append(first + i)
+            # keep the highest ones, they are the least likely to be real keys
+            self._scratch_keycodes = self._scratch_keycodes[-8:]
         except Exception as e:
-            print(f"Mouse event error: {e}")
-            return False
+            print(f"Could not read keyboard mapping: {e}")
 
-    def send_scroll_event(self, x, y, delta_y):
-        """Send scroll wheel event to this window's display"""
-        try:
-            self.root.warp_pointer(x, y)
-            self.display.sync()
-            button = 5 if delta_y > 0 else 4  # 5 = down, 4 = up
-            xtest.fake_input(self.display, X.ButtonPress, button)
-            self.display.sync()
-            xtest.fake_input(self.display, X.ButtonRelease, button)
-            self.display.sync()
-            return True
-        except Exception as e:
-            print(f"Scroll event error: {e}")
-            return False
+    def _fake_key(self, keycode, pressed):
+        xtest.fake_input(self.display, X.KeyPress if pressed else X.KeyRelease, keycode)
 
-    def send_key_event(self, keycode, pressed=True):
-        """Send keyboard event to this window's display"""
-        try:
-            keycode = self.display.keysym_to_keycode(keycode)
-            event_type = X.KeyPress if pressed else X.KeyRelease
-            xtest.fake_input(self.display, event_type, keycode)
-            self.display.sync()
-            return True
-        except Exception as e:
-            print(f"Key event error: {e}")
-            return False
+    def _lookup(self, keysym):
+        """Return (keycode, needs_shift) for keysym, remapping a spare key if needed."""
+        if keysym in self._remapped:
+            return self._remapped[keysym], False
+        best = None
+        for keycode, index in self.display.keysym_to_keycodes(keysym):
+            if index == 0:
+                return keycode, False
+            if index == 1 and best is None:
+                best = (keycode, True)
+        if best:
+            return best
+        return self._remap(keysym), False
 
-    def send_key_event_by_name(self, key_name, pressed=True):
-        """Send keyboard event using key name"""
-        try:
-            keycode = self.key_map.get(key_name.lower())
-            if keycode is None:
-                print(f"Unknown key: {key_name}")
-                return False
-            return self.send_key_event(keycode, pressed)
-        except Exception as e:
-            print(f"Key event by name error: {e}")
+    def _remap(self, keysym):
+        if not self._scratch_keycodes:
+            return None
+        keycode = self._scratch_keycodes[self._remap_next % len(self._scratch_keycodes)]
+        self._remap_next += 1
+        for ks, kc in list(self._remapped.items()):
+            if kc == keycode:
+                del self._remapped[ks]
+        self.display.change_keyboard_mapping(keycode, [(keysym, keysym)])
+        self.display.sync()
+        time.sleep(0.01)  # give clients time to process MappingNotify
+        self._remapped[keysym] = keycode
+        return keycode
+
+    def _keysym_for(self, key):
+        if key in DOM_KEY_TO_KEYSYM:
+            return XK.string_to_keysym(DOM_KEY_TO_KEYSYM[key])
+        if len(key) == 1:
+            return char_to_keysym(key)
+        ks = XK.string_to_keysym(key)
+        return ks or None
+
+    # ----------------------------------------------------------- keyboard
+    def send_key_combo(self, key, mods=()):
+        """Press modifiers + key and release everything (atomic shortcut)."""
+        keysym = self._keysym_for(key)
+        if not keysym:
+            print(f"Unknown key: {key!r}")
             return False
+        mods = [m for m in (mods or []) if m in MODIFIER_KEYSYMS]
+        keycode, needs_shift = self._lookup(keysym)
+        if not keycode:
+            return False
+        mod_keycodes = []
+        for m in mods:
+            kc = self.display.keysym_to_keycode(XK.string_to_keysym(MODIFIER_KEYSYMS[m]))
+            if kc and kc not in mod_keycodes:
+                mod_keycodes.append(kc)
+        if needs_shift and self._shift_keycode not in mod_keycodes:
+            mod_keycodes.append(self._shift_keycode)
+        try:
+            for kc in mod_keycodes:
+                self._fake_key(kc, True)
+            self._fake_key(keycode, True)
+            self._fake_key(keycode, False)
+        finally:
+            for kc in reversed(mod_keycodes):
+                self._fake_key(kc, False)
+            self.display.sync()
+        return True
 
     def send_text_input(self, text):
-        """Send text input by simulating key presses for each character"""
+        """Type text exactly as given, independent of the X keyboard layout."""
         try:
-            for char in text:
-                keycode = self.key_map.get(char)
-                if keycode is not None:
-                    self.send_key_event(keycode, True)
-                    self.send_key_event(keycode, False)
-                else:
-                    keysym = XK.string_to_keysym(char)
-                    if keysym == 0:
-                        keysym = XK.string_to_keysym(char.upper())
-                    if keysym != 0:
-                        keycode = self.display.keysym_to_keycode(keysym)
-                        if keycode:
-                            self.send_key_event(keycode, True)
-                            self.send_key_event(keycode, False)
-                        else:
-                            print(f"Could not find keycode for character: {char}")
-                    else:
-                        print(f"Could not find keysym for character: {char}")
+            for ch in text:
+                keysym = char_to_keysym(ch)
+                keycode, needs_shift = self._lookup(keysym)
+                if not keycode:
+                    print(f"Could not type character: {ch!r}")
+                    continue
+                if needs_shift:
+                    self._fake_key(self._shift_keycode, True)
+                self._fake_key(keycode, True)
+                self._fake_key(keycode, False)
+                if needs_shift:
+                    self._fake_key(self._shift_keycode, False)
+            self.display.sync()
             return True
         except Exception as e:
             print(f"Text input error: {e}")
             return False
+
+    def send_key_event_by_name(self, key_name, pressed=True):
+        """Legacy keydown/keyup API. Only key-down is acted upon, as an atomic tap,
+        so a lost keyup can never leave a key pressed."""
+        if not pressed:
+            return True
+        if key_name.lower() in MODIFIER_KEYSYMS:
+            return True  # bare modifiers are ignored; combos carry their modifiers
+        return self.send_key_combo(key_name)
+
+    # -------------------------------------------------------------- mouse
+    def _to_root(self, x, y):
+        return int(x) + self.window_display.x, int(y) + self.window_display.y
+
+    def move_pointer(self, x, y):
+        rx, ry = self._to_root(x, y)
+        self.root.warp_pointer(rx, ry)
+        self.display.sync()
+
+    def send_mouse_event(self, x, y, button=1, pressed=True, mods=()):
+        rx, ry = self._to_root(x, y)
+        mod_keycodes = []
+        if pressed:
+            for m in mods or []:
+                if m in MODIFIER_KEYSYMS:
+                    mod_keycodes.append(self.display.keysym_to_keycode(XK.string_to_keysym(MODIFIER_KEYSYMS[m])))
+        try:
+            self.root.warp_pointer(rx, ry)
+            for kc in mod_keycodes:
+                self._fake_key(kc, True)
+            xtest.fake_input(self.display, X.ButtonPress if pressed else X.ButtonRelease, int(button))
+            if pressed:
+                self.buttons_down.add(int(button))
+            else:
+                self.buttons_down.discard(int(button))
+        finally:
+            for kc in reversed(mod_keycodes):
+                self._fake_key(kc, False)
+            self.display.sync()
+        return True
+
+    def send_scroll(self, x, y, dx=0, dy=0):
+        rx, ry = self._to_root(x, y)
+        self.root.warp_pointer(rx, ry)
+        clicks = []
+        if dy:
+            clicks += [SCROLL_BUTTONS['down' if dy > 0 else 'up']] * min(abs(int(dy)), 20)
+        if dx:
+            clicks += [SCROLL_BUTTONS['right' if dx > 0 else 'left']] * min(abs(int(dx)), 20)
+        for b in clicks:
+            xtest.fake_input(self.display, X.ButtonPress, b)
+            xtest.fake_input(self.display, X.ButtonRelease, b)
+        self.display.sync()
+        return True
+
+    def send_scroll_event(self, x, y, delta_y):
+        """Legacy API: one click per event in the direction of delta_y."""
+        return self.send_scroll(x, y, 0, 1 if delta_y > 0 else -1)
+
+    # ------------------------------------------------------------- safety
+    def release_all(self):
+        """Release every key and mouse button currently held on this display."""
+        released = []
+        try:
+            keymap = self.display.query_keymap()
+            for keycode in range(8, 256):
+                if keymap[keycode // 8] & (1 << (keycode % 8)):
+                    self._fake_key(keycode, False)
+                    released.append(keycode)
+            mask = self.root.query_pointer().mask
+            for button, bit in ((1, X.Button1Mask), (2, X.Button2Mask), (3, X.Button3Mask)):
+                if mask & bit or button in self.buttons_down:
+                    xtest.fake_input(self.display, X.ButtonRelease, button)
+            self.buttons_down.clear()
+            self.display.sync()
+        except Exception as e:
+            print(f"release_all error: {e}")
+        return released

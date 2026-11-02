@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main X11 Web Display Server with HTTP API and WebTransport
+Main X11 Web Display Server with an HTTP API, streaming over WebSockets.
 """
 
 import sys
@@ -37,7 +37,6 @@ def handler_factory(display_manager):
 async def main_async():
     # Configuration
     HTTP_PORT = 8080
-    WEBTRANSPORT_PORT = 4433
     WEBSOCKET_PORT = 8081
 
     print("Starting X11 Web Display Server with HTTP API...")
@@ -47,9 +46,6 @@ async def main_async():
     settings = SettingsManager()
 
     HOST = settings.host
-    WEBTRANSPORT_HOST = settings.webtransport_host
-    if settings.transport == 'webtransport':
-        from webx11 import webtransport
 
     # Check if Xvfb is available
     try:
@@ -58,39 +54,33 @@ async def main_async():
         print("Error: Xvfb is not installed or not in PATH")
         print("Install it with: sudo apt-get install xvfb")
         sys.exit(1)
-
+    
     # Initialize managers
     display_manager = DisplayManager()
-
+    
     websocket_server, websocket_handler = await websockets.run_websocket_server(display_manager, HOST, WEBSOCKET_PORT)
-
-    webtransport_server = None
-    if settings.transport == 'webtransport':
-        webtransport_server = await webtransport.run_webtransport_server(display_manager, WEBTRANSPORT_HOST, WEBTRANSPORT_PORT)
 
     # Start window broadcast
     websocket_handler.start_window_broadcast(interval=round(1.0/settings.fps, 2))
 
     # Register cleanup function
     atexit.register(lambda: cleanup(display_manager, websocket_handler))
-
-    print(f"X11 Web Display Server with HTTP API started!")
-    print(f"HTTP interface: http://{HOST}:{HTTP_PORT}")
-    print(f"WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
-    if webtransport_server:
-        print(f"WebTransport server: https://{WEBTRANSPORT_HOST}:{WEBTRANSPORT_PORT}")
+    
+    print(f"✅ X11 Web Display Server with HTTP API started!")
+    print(f"🌐 HTTP interface: http://{HOST}:{HTTP_PORT}")
+    print(f"🔌 WebSocket server: ws://{HOST}:{WEBSOCKET_PORT}")
     print("\nAvailable HTTP Routes:")
     print("  GET  /              - Main interface")
     print("  GET  /displays      - List running displays")
-    print("  POST /display       - Start a display")
-    print("  GET  /display/{id}  - Access specific display")
+    print("  POST /display       - Create a display")
+    print("  GET  /display/{id}  - Access a specific display")
     print("\nPress Ctrl+C to stop the server")
     print("=" * 50)
-
+    
     # Create and start HTTP server
     # TODO replace the current HTTP server with something more robust using jinja2 templates
     http_server = ThreadedHTTPServer(display_manager, (HOST, HTTP_PORT), handler_factory(display_manager))
-
+    
     # Run HTTP server in a separated thread
     import threading
     http_thread = threading.Thread(target=http_server.serve_forever)
@@ -100,6 +90,7 @@ async def main_async():
     # If a parameter is passed, the executable is started
     process = None
     if len(sys.argv) > 1:
+        # Creating the display
         display = display_manager.create_display(settings.max_width, settings.max_height)
         process = display_manager.start_executable(display.display_id, argv[1])
 
@@ -113,7 +104,6 @@ async def main_async():
             process.terminate()
         websocket_server.close()
         await websocket_server.wait_closed()
-        # TODO: Make sure that the webtransport server is closed too
         http_server.shutdown()
         display_manager.stop_all()
 
